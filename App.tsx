@@ -400,13 +400,53 @@ function App() {
     });
   };
 
+  const handleDeleteDeck = (deckId: string) => {
+    setUserData(prevUserData => {
+      if (!prevUserData) return prevUserData;
+      
+      // Remove the deck from the decks array
+      const newDecks = prevUserData.decks.filter(deck => deck.id !== deckId);
+      
+      // If the deleted deck was active, clear the active deck
+      if (activeDeckId === deckId) {
+        setActiveDeckId(null);
+        setCurrentChapterIndex(0);
+        setLastAction(null);
+      }
+      
+      // Update progress
+      const newProgress = updateStudyProgress({ ...prevUserData, decks: newDecks }, 1);
+      return { decks: newDecks, progress: newProgress };
+    });
+  };
+
   const handleGoogleSignIn = async () => {
     const provider = new GoogleAuthProvider();
     try {
-      await signInWithPopup(auth, provider);
-    } catch (error) {
+      console.log("Attempting Google Sign-In...");
+      console.log("Current domain:", window.location.hostname);
+      console.log("Firebase config:", {
+        authDomain: "rewise-ai.firebaseapp.com",
+        projectId: "rewise-ai"
+      });
+      
+      const result = await signInWithPopup(auth, provider);
+      console.log("Sign-in successful:", result.user);
+    } catch (error: any) {
       console.error("Google Sign-In Error:", error);
-      setError("Failed to sign in. Please ensure your domain is authorized in Firebase and your config is correct.");
+      console.error("Error code:", error.code);
+      console.error("Error message:", error.message);
+      
+      let errorMessage = "Failed to sign in. ";
+      if (error.code === 'auth/unauthorized-domain') {
+        errorMessage += "Domain not authorized. Please add studyswipe-ai.netlify.app to Firebase authorized domains.";
+      } else if (error.code === 'auth/popup-closed-by-user') {
+        errorMessage += "Sign-in popup was closed. Please try again.";
+      } else {
+        errorMessage += "Please check your Firebase configuration.";
+      }
+      
+      setError(errorMessage);
     }
   };
 
@@ -447,7 +487,7 @@ function App() {
     }
     switch(activeView) {
       case 'myDecks':
-        return <MyDecksView decks={userData.decks || []} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} onResetDeck={handleResetDeck} isLoading={appStatus === 'loading'} error={error} />;
+        return <MyDecksView decks={userData.decks || []} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} onResetDeck={handleResetDeck} onDeleteDeck={handleDeleteDeck} isLoading={appStatus === 'loading'} error={error} />;
       case 'achievements':
         return <AchievementsView progressData={userData.progress} />;
       case 'study':
@@ -462,7 +502,7 @@ function App() {
         const cardsStudied = userData ? userData.decks.reduce((sum, deck) => sum + deck.knownCards.length + deck.reviseCards.length, 0) : 0;
         return <ProfileView user={currentUser} progressData={userData.progress} cardsStudied={cardsStudied} setActiveView={setActiveView} onLogout={handleLogout} onOpenModal={openModal} />;
       default:
-        return <MyDecksView decks={userData.decks || []} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} onResetDeck={handleResetDeck} isLoading={appStatus === 'loading'} error={error} />;
+        return <MyDecksView decks={userData.decks || []} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} onResetDeck={handleResetDeck} onDeleteDeck={handleDeleteDeck} isLoading={appStatus === 'loading'} error={error} />;
     }
   };
 

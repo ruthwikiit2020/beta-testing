@@ -10,16 +10,24 @@ const ResetIcon: React.FC<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
+// Delete icon component
+const DeleteIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg className={className} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+  </svg>
+);
+
 interface MyDecksViewProps {
   decks: UserDeck[];
   onSelectDeck: (deckId: string) => void;
   onGenerate: (text: string, fileName: string, onProgress: (p: number, s: string) => void) => void;
   onResetDeck: (deckId: string) => void;
+  onDeleteDeck: (deckId: string) => void;
   isLoading: boolean;
   error: string | null;
 }
 
-const MyDecksView: React.FC<MyDecksViewProps> = ({ decks, onSelectDeck, onGenerate, onResetDeck, isLoading, error }) => {
+const MyDecksView: React.FC<MyDecksViewProps> = ({ decks, onSelectDeck, onGenerate, onResetDeck, onDeleteDeck, isLoading, error }) => {
   const [showUpload, setShowUpload] = useState(decks.length === 0);
   
   const formatDate = (dateString: string) => {
@@ -96,10 +104,23 @@ const MyDecksView: React.FC<MyDecksViewProps> = ({ decks, onSelectDeck, onGenera
                     console.log('Reset button clicked for deck:', deck.id);
                     onResetDeck(deck.id);
                   }}
-                  className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                  className="p-2 text-slate-400 hover:text-orange-500 hover:bg-orange-50 dark:hover:bg-orange-900/20 rounded-lg transition-colors"
                   title="Reset deck progress"
                 >
                   <ResetIcon className="w-5 h-5" />
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (window.confirm(`Are you sure you want to delete "${deck.pdfName}"? This action cannot be undone.`)) {
+                      console.log('Delete button clicked for deck:', deck.id);
+                      onDeleteDeck(deck.id);
+                    }
+                  }}
+                  className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                  title="Delete deck"
+                >
+                  <DeleteIcon className="w-5 h-5" />
                 </button>
                 <ArrowRightIcon className="w-6 h-6 text-slate-400 dark:text-slate-500" />
               </div>
