@@ -40,7 +40,6 @@ const SideNav: React.FC<SideNavProps> = ({ activeView, setActiveView }) => {
   return (
     <nav className="hidden md:flex flex-col w-64 p-4 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-brand-surface flex-shrink-0">
        <div className="flex items-center gap-2 mb-8">
-            <img src="/cube-logo.svg" alt="rewise ai logo" className="w-8 h-8 rotate-90" />
             <h1 className="text-2xl font-bold">
               <span style={{color: '#429E9D'}}>re</span><span className="text-slate-600 dark:text-slate-200">wise</span> <span className="text-slate-600 dark:text-slate-300">ai</span>
             </h1>
