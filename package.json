@@ -4,11 +4,11 @@
   "version": "1.0.0-beta",
   "description": "AI-powered flashcard generation platform for transforming PDF study materials into interactive learning experiences",
   "keywords": ["ai", "flashcards", "education", "learning", "pdf", "react", "typescript", "firebase", "gemini"],
-  "author": "ReWise AI Team",
-  "license": "MIT",
+  "author": "Ruth Wiki",
+  "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/beta-testing.git"
+    "url": "https://github.com/ruthwikiit2020/beta-testing.git"
   },
   "homepage": "https://rewiseai.com",
   "type": "module",
