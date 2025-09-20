@@ -1,8 +1,11 @@
 import React, { useState, useCallback } from 'react';
-import { UploadIcon } from './icons/AppIcons';
+import { UploadIcon, FilterIcon } from './icons/AppIcons';
+import FilterPanel from './FilterPanel';
+import FilterPreview from './FilterPreview';
+import { FlashcardFilters, DEFAULT_FILTERS, NO_FILTERS } from '../types/filters';
 
 interface FileUploadProps {
-  onGenerate: (text: string, fileName: string, onProgress: (progress: number, status: string) => void) => void;
+  onGenerate: (text: string, fileName: string, filters: FlashcardFilters, totalPages: number, onProgress: (progress: number, status: string) => void) => void;
   isLoading: boolean;
 }
 
@@ -10,6 +13,9 @@ const FileUpload: React.FC<FileUploadProps> = ({ onGenerate, isLoading }) => {
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [extractedText, setExtractedText] = useState<string>('');
+  const [filters, setFilters] = useState<FlashcardFilters>(NO_FILTERS);
+  const [isFilterPanelOpen, setIsFilterPanelOpen] = useState(false);
+  const [totalPages, setTotalPages] = useState<number>(0);
 
   const handleFileChange = useCallback(async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -38,6 +44,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onGenerate, isLoading }) => {
         const pdf = await (window as any).pdfjsLib.getDocument(typedarray).promise;
         console.log('PDF loaded, processing pages...');
         
+        setTotalPages(pdf.numPages);
+        
         let fullText = '';
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
@@ -63,8 +71,58 @@ const FileUpload: React.FC<FileUploadProps> = ({ onGenerate, isLoading }) => {
 
   const handleGenerateClick = () => {
     if (extractedText && !isLoading && fileName) {
-      onGenerate(extractedText, fileName, () => {}); // onProgress is handled by the parent
+      console.log('🚀 FileUpload: Starting generation with filters:', filters);
+      console.log('📊 FileUpload: Total pages:', totalPages);
+      console.log('📝 FileUpload: Text length:', extractedText.length);
+      
+      onGenerate(extractedText, fileName, filters, totalPages, () => {}); // onProgress is handled by the parent
     }
+  };
+
+  const handleFiltersChange = (newFilters: FlashcardFilters) => {
+    setFilters(newFilters);
+  };
+
+  const handleRemoveFilter = (filterType: keyof FlashcardFilters) => {
+    const newFilters = { ...filters };
+    
+    switch (filterType) {
+      case 'studyGoal':
+        newFilters.studyGoal = 'concept-mastery';
+        break;
+      case 'contentType':
+        newFilters.contentType = ['full-detail'];
+        break;
+      case 'depth':
+        newFilters.depth = 'moderate';
+        break;
+      case 'organization':
+        newFilters.organization = 'chapter-wise';
+        break;
+      case 'limitPerChapter':
+        newFilters.limitPerChapter = 15;
+        break;
+      case 'pageRange':
+        newFilters.pageRange = undefined;
+        break;
+    }
+    
+    setFilters(newFilters);
+  };
+
+  const handleClearAllFilters = () => {
+    setFilters(NO_FILTERS);
+  };
+
+  const hasActiveFilters = () => {
+    // Check if any filter has been modified from the default state
+    return filters.studyGoal !== 'concept-mastery' ||
+           !filters.contentType.includes('full-detail') ||
+           filters.contentType.length !== 1 ||
+           filters.depth !== 'moderate' ||
+           filters.organization !== 'chapter-wise' ||
+           filters.limitPerChapter !== 15 ||
+           filters.pageRange;
   };
 
   return (
@@ -84,24 +142,59 @@ const FileUpload: React.FC<FileUploadProps> = ({ onGenerate, isLoading }) => {
 
         {error && <p className="text-red-500 dark:text-red-400 mt-2">{error}</p>}
         
-        <button
-          onClick={handleGenerateClick}
-          disabled={!extractedText || isLoading}
-          className="w-full bg-brand-primary hover:bg-teal-500 disabled:bg-slate-400 dark:disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 flex items-center justify-center gap-2 shadow-md disabled:shadow-none"
-        >
-          {isLoading ? (
-            <>
-              <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
-              Preparing...
-            </>
-          ) : (
-            'Generate Flashcards'
-          )}
-        </button>
+        {/* Filter Preview */}
+        {extractedText && (
+          <FilterPreview
+            filters={filters}
+            onRemoveFilter={handleRemoveFilter}
+            onClearAll={handleClearAllFilters}
+          />
+        )}
+        
+        {/* Action Buttons */}
+        <div className="flex gap-3 w-full">
+          <button
+            onClick={() => setIsFilterPanelOpen(true)}
+            disabled={!extractedText || isLoading}
+            className="flex-1 bg-gradient-to-r from-slate-100 to-slate-200 dark:from-slate-700 dark:to-slate-600 hover:from-slate-200 hover:to-slate-300 dark:hover:from-slate-600 dark:hover:to-slate-500 disabled:from-slate-300 disabled:to-slate-400 dark:disabled:from-slate-800 dark:disabled:to-slate-700 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 font-semibold py-4 px-6 rounded-xl transition-all duration-300 flex items-center justify-center gap-3 shadow-sm hover:shadow-md disabled:shadow-none group"
+          >
+            <FilterIcon className="w-5 h-5 group-hover:scale-110 transition-transform" />
+            <span>Smart Filters</span>
+            {hasActiveFilters() && (
+              <div className="w-2 h-2 bg-brand-primary rounded-full"></div>
+            )}
+          </button>
+          
+          <button
+            onClick={handleGenerateClick}
+            disabled={!extractedText || isLoading}
+            className="flex-1 bg-gradient-to-r from-brand-primary to-teal-600 hover:from-teal-600 hover:to-brand-primary disabled:from-slate-400 disabled:to-slate-500 dark:disabled:from-slate-600 dark:disabled:to-slate-700 disabled:cursor-not-allowed text-white font-bold py-4 px-6 rounded-xl transition-all duration-300 flex items-center justify-center gap-3 shadow-lg hover:shadow-xl disabled:shadow-none transform hover:scale-[1.02] active:scale-[0.98] disabled:transform-none"
+          >
+            {isLoading ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Preparing...
+              </>
+            ) : (
+              <>
+                <span>Generate Flashcards</span>
+                <div className="w-2 h-2 bg-white/30 rounded-full"></div>
+              </>
+            )}
+          </button>
+        </div>
       </div>
+      
+      {/* Filter Panel */}
+      <FilterPanel
+        isOpen={isFilterPanelOpen}
+        onClose={() => setIsFilterPanelOpen(false)}
+        filters={filters}
+        onFiltersChange={handleFiltersChange}
+        totalPages={totalPages}
+      />
     </div>
   );
 };

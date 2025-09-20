@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { UserDeck } from '../types';
 import FileUpload from './FileUpload';
+import UsageIndicator from './UsageIndicator';
 import { BookOpenIcon, UploadIcon, ArrowRightIcon } from './icons/AppIcons';
 
 // Reset icon component
@@ -20,7 +21,7 @@ const DeleteIcon: React.FC<{ className?: string }> = ({ className }) => (
 interface MyDecksViewProps {
   decks: UserDeck[];
   onSelectDeck: (deckId: string) => void;
-  onGenerate: (text: string, fileName: string, onProgress: (p: number, s: string) => void) => void;
+  onGenerate: (text: string, fileName: string, filters: any, totalPages: number, onProgress: (p: number, s: string) => void) => void;
   onResetDeck: (deckId: string) => void;
   onDeleteDeck: (deckId: string) => void;
   isLoading: boolean;
@@ -28,7 +29,7 @@ interface MyDecksViewProps {
 }
 
 const MyDecksView: React.FC<MyDecksViewProps> = ({ decks, onSelectDeck, onGenerate, onResetDeck, onDeleteDeck, isLoading, error }) => {
-  const [showUpload, setShowUpload] = useState(decks.length === 0);
+  const [showUpload, setShowUpload] = useState(false);
   
   const formatDate = (dateString: string) => {
       return new Date(dateString).toLocaleDateString('en-US', {
@@ -39,7 +40,7 @@ const MyDecksView: React.FC<MyDecksViewProps> = ({ decks, onSelectDeck, onGenera
   if (showUpload || decks.length === 0) {
       return (
           <div className="min-h-full flex flex-col items-center justify-center p-4">
-              {!isLoading && <FileUpload onGenerate={onGenerate} isLoading={isLoading} />}
+              {!isLoading && <FileUpload onGenerate={(text, fileName, filters, totalPages, onProgress) => onGenerate(text, fileName, filters, totalPages, onProgress)} isLoading={isLoading} />}
               {isLoading && (
                   <div className="text-center">
                       <div className="animate-spin h-8 w-8 text-brand-primary mx-auto mb-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -74,6 +75,13 @@ const MyDecksView: React.FC<MyDecksViewProps> = ({ decks, onSelectDeck, onGenera
           Add New Deck
         </button>
       </header>
+
+      {/* Usage Indicators */}
+      <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+        <UsageIndicator type="pdfUploads" />
+        <UsageIndicator type="flashcards" />
+        <UsageIndicator type="revisionHub" />
+      </div>
       
       <div className="space-y-4">
         {decks.map(deck => (

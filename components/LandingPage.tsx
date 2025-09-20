@@ -1,6 +1,7 @@
 import React from 'react';
 import { GoogleIcon, StudyIcon, RevisionIcon, ProgressIcon, SunIcon, MoonIcon } from './icons/AppIcons';
 import { BackgroundNoiseWrapper } from './ui/background-noise-effect';
+import { PricingSectionDemo } from './blocks/pricing-demo';
 
 interface LandingPageProps {
   onGoogleSignIn: () => void;
@@ -38,6 +39,13 @@ const motion = {
 };
 
 const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggleTheme }) => {
+  const scrollToSection = (sectionId: string) => {
+    const element = document.getElementById(sectionId);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
   return (
     <BackgroundNoiseWrapper 
       variant={theme === 'dark' ? 'dark' : 'light'} 
@@ -50,6 +58,29 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggle
                     <span style={{color: '#429E9D'}}>re</span><span className="text-slate-600 dark:text-slate-200">wise</span> <span className="text-slate-600 dark:text-slate-300">ai</span>
               </h1>
               </div>
+              
+              {/* Navigation Links */}
+              <div className="hidden md:flex items-center gap-8">
+                  <button 
+                    onClick={() => scrollToSection('features')} 
+                    className="text-slate-600 dark:text-slate-300 hover:text-brand-primary transition-colors font-medium"
+                  >
+                    Features
+                  </button>
+                  <button 
+                    onClick={() => scrollToSection('how-it-works')} 
+                    className="text-slate-600 dark:text-slate-300 hover:text-brand-primary transition-colors font-medium"
+                  >
+                    How It Works
+                  </button>
+                  <button 
+                    onClick={() => scrollToSection('pricing')} 
+                    className="text-slate-600 dark:text-slate-300 hover:text-brand-primary transition-colors font-medium"
+                  >
+                    Pricing
+                  </button>
+              </div>
+
               <div className="flex items-center gap-4">
                   <button onClick={toggleTheme} className="p-2 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">
                       {theme === 'dark' ? <SunIcon className="w-6 h-6 text-yellow-400" /> : <MoonIcon className="w-6 h-6 text-slate-800" />}
@@ -94,7 +125,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggle
         </section>
 
         {/* How it Works Section */}
-        <section className="py-20 bg-slate-100 dark:bg-brand-surface">
+        <section id="how-it-works" className="py-20 bg-slate-100 dark:bg-brand-surface">
             <div className="container mx-auto px-6">
                 <div className="text-center mb-12">
                     <h2 className="text-3xl md:text-4xl font-bold">How It Works</h2>
@@ -109,7 +140,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggle
         </section>
 
         {/* Features Section */}
-        <section className="py-20">
+        <section id="features" className="py-20">
              <div className="container mx-auto px-6">
                 <div className="text-center mb-12">
                     <h2 className="text-3xl md:text-4xl font-bold">A Smarter Way to Study</h2>
@@ -121,6 +152,11 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggle
                     <FeatureCard icon={<ProgressIcon className="w-10 h-10" />} title="Track Your Progress" description="Visualize your learning with streaks, mastery levels, and weekly reports. Stay motivated and watch your knowledge grow." />
                 </div>
             </div>
+        </section>
+
+        {/* Pricing Section */}
+        <section id="pricing">
+            <PricingSectionDemo onFreePlanClick={onGoogleSignIn} />
         </section>
       </main>
 

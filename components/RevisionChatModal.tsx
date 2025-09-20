@@ -3,6 +3,7 @@ import type { Flashcard } from '../types';
 import { getDetailedExplanation, startCardChat } from '../services/geminiService';
 import type { Chat } from '@google/genai';
 import { XIcon } from './icons/AppIcons';
+import MarkdownRenderer from './MarkdownRenderer';
 
 interface RevisionChatModalProps {
   card: Flashcard;
@@ -23,6 +24,7 @@ const RevisionChatModal: React.FC<RevisionChatModalProps> = ({ card, isOpen, onC
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [userInput, setUserInput] = useState('');
   const [isBotTyping, setIsBotTyping] = useState(false);
+  const [showScrollButton, setShowScrollButton] = useState(false);
   
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
@@ -55,8 +57,84 @@ const RevisionChatModal: React.FC<RevisionChatModalProps> = ({ card, isOpen, onC
   }, [card]);
 
   useEffect(() => {
-    chatContainerRef.current?.scrollTo(0, chatContainerRef.current.scrollHeight);
+    // Auto-scroll to bottom when new messages arrive or bot is typing
+    const scrollToBottom = () => {
+      if (chatContainerRef.current) {
+        const container = chatContainerRef.current;
+        console.log('🔄 Attempting to scroll to bottom...', {
+          scrollHeight: container.scrollHeight,
+          scrollTop: container.scrollTop,
+          clientHeight: container.clientHeight
+        });
+        
+        // Use both methods to ensure scrolling works
+        container.scrollTop = container.scrollHeight;
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: 'smooth'
+        });
+        
+        console.log('✅ Scroll completed', {
+          newScrollTop: container.scrollTop,
+          newScrollHeight: container.scrollHeight
+        });
+      } else {
+        console.log('❌ No chat container found');
+      }
+    };
+    
+    // Immediate scroll
+    scrollToBottom();
+    
+    // Multiple attempts to ensure scrolling works
+    const timeoutId1 = setTimeout(scrollToBottom, 50);
+    const timeoutId2 = setTimeout(scrollToBottom, 150);
+    const timeoutId3 = setTimeout(scrollToBottom, 300);
+    const timeoutId4 = setTimeout(scrollToBottom, 500);
+    
+    return () => {
+      clearTimeout(timeoutId1);
+      clearTimeout(timeoutId2);
+      clearTimeout(timeoutId3);
+      clearTimeout(timeoutId4);
+    };
   }, [chatHistory, isBotTyping]);
+
+  // Handle scroll detection for scroll-to-bottom button
+  useEffect(() => {
+    const chatContainer = chatContainerRef.current;
+    if (!chatContainer) return;
+
+    const handleScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = chatContainer;
+      const isNearBottom = scrollHeight - scrollTop - clientHeight < 100;
+      setShowScrollButton(!isNearBottom);
+    };
+
+    // Initial check
+    handleScroll();
+    
+    chatContainer.addEventListener('scroll', handleScroll);
+    return () => chatContainer.removeEventListener('scroll', handleScroll);
+  }, [chatHistory]);
+
+  const scrollToBottom = () => {
+    if (chatContainerRef.current) {
+      const container = chatContainerRef.current;
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  };
+
+  // Force scroll to bottom function
+  const forceScrollToBottom = () => {
+    if (chatContainerRef.current) {
+      const container = chatContainerRef.current;
+      container.scrollTop = container.scrollHeight;
+    }
+  };
   
   const handleSendMessage = async () => {
     if (!userInput.trim() || !chat || isBotTyping) return;
@@ -64,12 +142,48 @@ const RevisionChatModal: React.FC<RevisionChatModalProps> = ({ card, isOpen, onC
     const text = userInput;
     setUserInput('');
     setChatHistory(prev => [...prev, { role: 'user', text }]);
+    
+    // Force scroll to bottom immediately after adding user message
+    setTimeout(() => {
+      if (chatContainerRef.current) {
+        const container = chatContainerRef.current;
+        console.log('🔄 User message scroll attempt...', {
+          scrollHeight: container.scrollHeight,
+          scrollTop: container.scrollTop
+        });
+        container.scrollTop = container.scrollHeight;
+      }
+    }, 10);
+    
+    // Also try smooth scroll
+    setTimeout(() => {
+      if (chatContainerRef.current) {
+        const container = chatContainerRef.current;
+        console.log('🔄 User message smooth scroll attempt...', {
+          scrollHeight: container.scrollHeight,
+          scrollTop: container.scrollTop
+        });
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: 'smooth'
+        });
+      }
+    }, 50);
+    
     setIsBotTyping(true);
 
     try {
       const stream = await chat.sendMessageStream({ message: text });
       let fullResponse = '';
       setChatHistory(prev => [...prev, { role: 'model', text: '...' }]);
+      
+      // Scroll when bot starts typing
+      setTimeout(() => {
+        if (chatContainerRef.current) {
+          const container = chatContainerRef.current;
+          container.scrollTop = container.scrollHeight;
+        }
+      }, 20);
       
       for await (const chunk of stream) {
         fullResponse += chunk.text;
@@ -78,12 +192,44 @@ const RevisionChatModal: React.FC<RevisionChatModalProps> = ({ card, isOpen, onC
           newHistory[newHistory.length - 1].text = fullResponse;
           return newHistory;
         });
+        
+        // Auto-scroll during streaming - more aggressive
+        setTimeout(() => {
+          if (chatContainerRef.current) {
+            const container = chatContainerRef.current;
+            console.log('🔄 Streaming scroll attempt...', {
+              scrollHeight: container.scrollHeight,
+              scrollTop: container.scrollTop,
+              fullResponse: fullResponse.substring(0, 50) + '...'
+            });
+            container.scrollTop = container.scrollHeight;
+          }
+        }, 5);
+        
+        // Also try smooth scroll
+        setTimeout(() => {
+          if (chatContainerRef.current) {
+            const container = chatContainerRef.current;
+            container.scrollTo({
+              top: container.scrollHeight,
+              behavior: 'smooth'
+            });
+          }
+        }, 15);
       }
     } catch (error) {
       console.error("Error sending message:", error);
       setChatHistory(prev => [...prev, { role: 'model', text: 'Sorry, I encountered an error. Please try again.' }]);
     } finally {
       setIsBotTyping(false);
+      
+      // Final scroll when bot finishes typing
+      setTimeout(() => {
+        if (chatContainerRef.current) {
+          const container = chatContainerRef.current;
+          container.scrollTop = container.scrollHeight;
+        }
+      }, 100);
     }
   };
 
@@ -108,7 +254,7 @@ const RevisionChatModal: React.FC<RevisionChatModalProps> = ({ card, isOpen, onC
           </button>
         </header>
 
-        <div className="flex-grow overflow-y-auto p-4 space-y-4">
+        <div ref={chatContainerRef} className="flex-grow overflow-y-auto p-4 space-y-4">
           {/* Initial Explanation */}
           <div className="bg-slate-100 dark:bg-brand-surface p-4 rounded-lg">
             <h3 className="font-semibold mb-2 text-brand-primary">Detailed Explanation</h3>
@@ -119,12 +265,15 @@ const RevisionChatModal: React.FC<RevisionChatModalProps> = ({ card, isOpen, onC
                 <div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-3/4"></div>
               </div>
             ) : (
-              <p className="whitespace-pre-wrap text-slate-700 dark:text-slate-300">{explanation}</p>
+              <MarkdownRenderer 
+                text={explanation} 
+                className="text-slate-700 dark:text-slate-300" 
+              />
             )}
           </div>
           
           {/* Chat History */}
-          <div ref={chatContainerRef} className="space-y-4">
+          <div className="space-y-4">
             {chatHistory.map((msg, index) => (
               <div key={index} className={`flex items-end gap-2 ${msg.role === 'user' ? 'justify-end' : ''}`}>
                 <div className={`max-w-md p-3 rounded-2xl ${
@@ -132,23 +281,42 @@ const RevisionChatModal: React.FC<RevisionChatModalProps> = ({ card, isOpen, onC
                     ? 'bg-brand-primary text-white rounded-br-none' 
                     : 'bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-bl-none'
                 }`}>
-                  <p className="whitespace-pre-wrap">{msg.text}</p>
+                  <MarkdownRenderer 
+                    text={msg.text} 
+                    className="whitespace-pre-wrap" 
+                  />
                 </div>
               </div>
             ))}
              {isBotTyping && (
                 <div className="flex items-end gap-2">
                     <div className="max-w-md p-3 rounded-2xl bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 rounded-bl-none">
-                        <div className="flex items-center gap-1">
-                            <span className="w-2 h-2 bg-slate-400 rounded-full animate-pulse delay-75"></span>
-                            <span className="w-2 h-2 bg-slate-400 rounded-full animate-pulse delay-150"></span>
-                            <span className="w-2 h-2 bg-slate-400 rounded-full animate-pulse delay-300"></span>
+                        <div className="flex items-center gap-2">
+                            <span className="text-sm text-slate-600 dark:text-slate-400">AI is thinking</span>
+                            <div className="flex items-center gap-1">
+                                <span className="w-2 h-2 bg-brand-primary rounded-full animate-bounce delay-75"></span>
+                                <span className="w-2 h-2 bg-brand-primary rounded-full animate-bounce delay-150"></span>
+                                <span className="w-2 h-2 bg-brand-primary rounded-full animate-bounce delay-300"></span>
+                            </div>
                         </div>
                     </div>
                 </div>
             )}
           </div>
         </div>
+        
+        {/* Scroll to bottom button */}
+        {showScrollButton && (
+          <button
+            onClick={forceScrollToBottom}
+            className="absolute bottom-20 right-4 bg-brand-primary hover:bg-teal-600 text-white p-2 rounded-full shadow-lg transition-all duration-200 hover:scale-110 z-10"
+            title="Scroll to bottom"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+          </button>
+        )}
 
         <footer className="flex-shrink-0 p-4 border-t border-slate-200 dark:border-slate-700">
           <div className="flex items-center gap-2">

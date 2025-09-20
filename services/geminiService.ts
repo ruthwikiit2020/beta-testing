@@ -1,37 +1,179 @@
 import { GoogleGenAI, Type, Chat } from "@google/genai";
 import type { ChapterDeck, Flashcard } from '../types';
+import type { FlashcardFilters } from '../types/filters';
+import { ragPipeline } from './ragPipeline';
+import { retryWithBackoff } from './utils';
 
-// Retry function for handling temporary API errors
-async function retryWithBackoff<T>(
-  fn: () => Promise<T>,
-  maxRetries: number = 3,
-  baseDelay: number = 1000
-): Promise<T> {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error: any) {
-      const isRetryableError = error?.code === 503 || 
-                              error?.status === 'UNAVAILABLE' ||
-                              error?.message?.includes('overloaded') ||
-                              error?.message?.includes('try again later');
-      
-      if (isRetryableError && attempt < maxRetries) {
-        const delay = baseDelay * Math.pow(2, attempt - 1); // Exponential backoff
-        console.log(`Attempt ${attempt} failed, retrying in ${delay}ms...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-        continue;
-      }
-      
-      throw error;
-    }
+
+// Function to build enhanced prompt based on filters
+function buildFilteredPrompt(studyMaterial: string, filters: FlashcardFilters, totalPages: number = 0): string {
+  const { studyGoal, contentType, depth, organization, limitPerChapter, pageRange } = filters;
+  
+  // Check if filters are in default state (no custom filters applied)
+  const isDefaultFilters = studyGoal === 'concept-mastery' && 
+                          contentType.includes('full-detail') && 
+                          contentType.length === 1 &&
+                          depth === 'moderate' && 
+                          organization === 'chapter-wise' && 
+                          limitPerChapter === 15 && 
+                          !pageRange;
+  
+  if (isDefaultFilters) {
+    // Use original LLM behavior - no custom prompts, let the LLM decide naturally
+    return `You are an expert AI study assistant. Analyze the following study material and convert it into a structured set of flashcards, organized by chapter or main topic. For each flashcard, provide a concise 'question' or 'term' for the front and a clear 'answer' or 'definition' for the back. The material is as follows: \n\n---START OF MATERIAL---\n${studyMaterial}\n---END OF MATERIAL---`;
   }
-  throw new Error('Max retries exceeded');
+  
+  // Use custom filters if they've been modified
+  let prompt = `You are an expert AI study assistant. Analyze the following study material and convert it into a structured set of flashcards, organized by chapter or main topic.`;
+  
+  // Study Goal Instructions
+  switch (studyGoal) {
+    case 'exam-revision':
+      prompt += ` Focus on key facts, formulas, and quick recall information that would be essential for exam preparation. Prioritize memorization-friendly content.`;
+      break;
+    case 'concept-mastery':
+      prompt += ` Focus on deep understanding, conceptual connections, and comprehensive explanations that help build mastery of the subject.`;
+      break;
+    case 'quick-review':
+      prompt += ` Focus on concise summaries, main points, and essential information for quick review sessions. Keep content brief and to the point.`;
+      break;
+  }
+  
+  // Content Type Instructions
+  if (contentType.length > 0 && !contentType.includes('full-detail')) {
+    const contentTypes = contentType.map(type => {
+      switch (type) {
+        case 'formulas': return 'mathematical formulas, equations, and calculations';
+        case 'definitions': return 'key terms, definitions, and important concepts';
+        case 'diagrams': return 'visual elements, diagrams, and figures';
+        default: return type;
+      }
+    }).join(', ');
+    prompt += ` Specifically focus on: ${contentTypes}.`;
+  }
+  
+  // Depth Instructions
+  switch (depth) {
+    case 'short':
+      prompt += ` Keep flashcards concise and crisp - essential information only.`;
+      break;
+    case 'moderate':
+      prompt += ` Provide balanced detail - not too brief, not too verbose.`;
+      break;
+    case 'in-depth':
+      prompt += ` Provide comprehensive and detailed explanations for thorough understanding.`;
+      break;
+  }
+  
+  // Organization Instructions
+  switch (organization) {
+    case 'chapter-wise':
+      prompt += ` Organize flashcards by chapters or main sections as they appear in the material.`;
+      break;
+    case 'topic-clusters':
+      prompt += ` Group related flashcards by topic clusters rather than strict chapter order.`;
+      break;
+    case 'custom-tags':
+      prompt += ` Organize flashcards with meaningful tags and categories based on content type and difficulty.`;
+      break;
+  }
+  
+  // Quantity Instructions
+  prompt += ` Generate approximately ${limitPerChapter} flashcards per chapter/topic.`;
+  
+  // Page Range Instructions
+  if (pageRange) {
+    prompt += ` Focus on content from pages ${pageRange.from} to ${pageRange.to} of the material.`;
+  }
+  
+  prompt += `\n\nFor each flashcard, provide a concise 'question' or 'term' for the front and a clear 'answer' or 'definition' for the back. The material is as follows: \n\n---START OF MATERIAL---\n${studyMaterial}\n---END OF MATERIAL---`;
+  
+  return prompt;
+}
+
+// Optimized RAG-based flashcard generation
+export async function generateFlashcardsWithRAG(
+  studyMaterial: string,
+  fileName: string,
+  onProgress: (progress: number, status: string) => void,
+  filters: FlashcardFilters,
+  totalPages: number = 1
+): Promise<ChapterDeck[]> {
+  try {
+    console.log('🚀 Starting RAG-based flashcard generation...');
+    console.log('📄 File:', fileName);
+    console.log('📝 Text length:', studyMaterial.length);
+    console.log('🔧 Filters:', filters);
+    
+    // Use RAG pipeline for optimized generation
+    const ragResult = await ragPipeline.generateFlashcards(
+      studyMaterial,
+      fileName,
+      filters,
+      totalPages,
+      onProgress
+    );
+    
+    console.log('✅ RAG Pipeline completed:', ragResult.metadata);
+    console.log('📊 Generated flashcards:', ragResult.flashcards.length);
+    
+    // Convert the result to ChapterDeck format
+    // The RAG pipeline returns flashcards, we need to organize them by chapter
+    const chapterDecks: ChapterDeck[] = [];
+    
+    if (ragResult.flashcards && ragResult.flashcards.length > 0) {
+      // Group flashcards by chapter if available
+      const chapterMap = new Map<string, any[]>();
+      
+      ragResult.flashcards.forEach((card: any) => {
+        const chapter = card.chapter || 'General';
+        if (!chapterMap.has(chapter)) {
+          chapterMap.set(chapter, []);
+        }
+        chapterMap.get(chapter)!.push(card);
+      });
+      
+      // Convert to ChapterDeck format
+      chapterMap.forEach((cards, chapterName) => {
+        chapterDecks.push({
+          chapterTitle: chapterName,
+          flashcards: cards.map((card, index) => ({
+            id: `card_${Date.now()}_${index}`,
+            question: card.question || card.front || card.term || 'Question',
+            answer: card.answer || card.back || card.definition || 'Answer'
+          }))
+        });
+      });
+    }
+    
+    // If no chapters found, create a single chapter
+    if (chapterDecks.length === 0) {
+      chapterDecks.push({
+        chapterTitle: 'General',
+        flashcards: []
+      });
+    }
+    
+    return chapterDecks;
+    
+  } catch (error) {
+    console.error('❌ RAG Pipeline Error:', error);
+    console.error('❌ Error details:', {
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      name: error instanceof Error ? error.name : 'Unknown'
+    });
+    // Fallback to original method
+    console.log('🔄 Falling back to original generation method...');
+    return generateFlashcardsFromText(studyMaterial, onProgress, filters, 0);
+  }
 }
 
 export async function generateFlashcardsFromText(
   studyMaterial: string,
-  onProgress: (progress: number, status: string) => void
+  onProgress: (progress: number, status: string) => void,
+  filters: FlashcardFilters,
+  totalPages: number = 0
 ): Promise<ChapterDeck[]> {
   try {
     onProgress(0, 'Initializing AI...');
@@ -63,7 +205,7 @@ export async function generateFlashcardsFromText(
     console.log('Study material preview:', studyMaterial.substring(0, 200) + '...');
     
     onProgress(0.1, 'Crafting expert prompt...');
-    const prompt = `You are an expert AI study assistant. Analyze the following study material and convert it into a structured set of flashcards, organized by chapter or main topic. For each flashcard, provide a concise 'question' or 'term' for the front and a clear 'answer' or 'definition' for the back. The material is as follows: \n\n---START OF MATERIAL---\n${studyMaterial}\n---END OF MATERIAL---`;
+    const prompt = buildFilteredPrompt(studyMaterial, filters, totalPages);
     
     onProgress(0.25, 'Sending request to Gemini...');
     console.log('Sending request to Gemini API...');
@@ -155,12 +297,19 @@ export async function getDetailedExplanation(card: Flashcard): Promise<string> {
   try {
     const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY || 'AIzaSyCZHn2yAzKqyM-zaIVEB8YHkI98VdEz-ss';
     const ai = new GoogleGenAI({ apiKey });
-    const prompt = `Provide a detailed explanation for the following flashcard concept. Explain it clearly as if you were a tutor helping a student understand it better.
+    const prompt = `Provide a detailed explanation for the following flashcard concept. Explain it clearly as if you were a friendly tutor helping a student understand it better.
     
     Term/Question: "${card.question}"
     Answer/Definition: "${card.answer}"
 
-    Your explanation should go beyond the simple answer and provide more context, examples, or analogies to make the concept easier to grasp.`;
+    Your explanation should go beyond the simple answer and provide more context, examples, or analogies to make the concept easier to grasp. 
+    
+    **Guidelines:**
+    - Use emojis naturally to make the explanation more engaging (:lightbulb:, :thinking:, :thumbsup:, etc.)
+    - Break down complex concepts into simple parts
+    - Use real-world examples and analogies
+    - Be encouraging and supportive
+    - Keep the tone conversational and friendly`;
 
     const response = await retryWithBackoff(async () => {
       return await ai.models.generateContent({
@@ -183,13 +332,21 @@ export async function getDetailedExplanation(card: Flashcard): Promise<string> {
 export function startCardChat(card: Flashcard): Chat {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY || 'AIzaSyCZHn2yAzKqyM-zaIVEB8YHkI98VdEz-ss';
   const ai = new GoogleGenAI({ apiKey });
-  const systemInstruction = `You are an expert AI tutor. Your student is reviewing a flashcard and needs help.
+  const systemInstruction = `You are an expert AI tutor with a friendly and engaging personality. Your student is reviewing a flashcard and needs help.
   
   The flashcard is:
   - Question: "${card.question}"
   - Answer: "${card.answer}"
   
-  Your role is to help the student understand this concept deeply. Answer their questions, provide simple explanations, and give real-world examples when asked. Be encouraging and helpful.`;
+  Your role is to help the student understand this concept deeply. Answer their questions, provide simple explanations, and give real-world examples when asked. Be encouraging and helpful.
+  
+  **Important guidelines:**
+  - Use emojis naturally in your responses to make them more engaging and friendly (e.g., :smile:, :thinking:, :lightbulb:, :thumbsup:)
+  - You can also use regular emojis directly (😊, 🤔, 💡, 👍, etc.)
+  - Keep responses conversational and encouraging
+  - Break down complex concepts into simple, digestible parts
+  - Use analogies and examples to make concepts clearer
+  - Ask follow-up questions to check understanding when appropriate`;
 
   return ai.chats.create({
     model: 'gemini-2.5-flash',

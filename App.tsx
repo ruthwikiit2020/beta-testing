@@ -1,9 +1,11 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { generateFlashcardsFromText } from './services/geminiService';
+import { generateFlashcardsFromText, generateFlashcardsWithRAG } from './services/geminiService';
 import { auth, db } from './services/firebase';
 import { onAuthStateChanged, GoogleAuthProvider, signInWithPopup, signOut } from "firebase/auth";
 import { doc, getDoc, setDoc } from "firebase/firestore"; 
 import type { Flashcard, ChapterDeck, UserData, UserDeck, ProgressData, GoogleUser } from './types';
+import type { FlashcardFilters } from './types/filters';
+import { subscriptionService } from './services/subscriptionService';
 import BottomNav from './components/BottomNav';
 import SideNav from './components/SideNav';
 import StudyView from './components/StudyView';
@@ -37,17 +39,20 @@ const INITIAL_USER_DATA: UserData = {
 
 function App() {
   const [appStatus, setAppStatus] = useState<AppStatus>('initializing');
-  const [activeView, setActiveView] = useState<AppView>('myDecks');
+  const [activeView, setActiveView] = useState<AppView>(() => (localStorage.getItem('activeView') as AppView) || 'myDecks');
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('theme') as Theme) || 'dark');
   
   const [currentUser, setCurrentUser] = useState<GoogleUser | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
-  const [activeDeckId, setActiveDeckId] = useState<string | null>(null);
+  const [activeDeckId, setActiveDeckId] = useState<string | null>(() => localStorage.getItem('activeDeckId'));
 
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingStatus, setLoadingStatus] = useState('');
   
-  const [lastAction, setLastAction] = useState<{ card: Flashcard; type: 'known' | 'revise' } | null>(null);
+  const [lastAction, setLastAction] = useState<{ card: Flashcard; type: 'known' | 'revise' } | null>(() => {
+    const saved = localStorage.getItem('lastAction');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [error, setError] = useState<string | null>(null);
   
   const [selectedCardForChat, setSelectedCardForChat] = useState<Flashcard | null>(null);
@@ -66,12 +71,16 @@ function App() {
           email: user.email,
           picture: user.photoURL,
         };
+        console.log('Setting current user:', userProfile);
+        console.log('User photoURL:', user.photoURL);
         setCurrentUser(userProfile);
 
         // Set a timeout to prevent infinite loading
         const timeoutId = setTimeout(() => {
           console.log('Timeout reached, setting to authenticated with initial data');
           setUserData(INITIAL_USER_DATA);
+          // Sync PDF count with actual deck count
+          subscriptionService.syncCurrentPdfCount(0);
           setAppStatus('authenticated');
           setActiveView('myDecks');
         }, 10000); // 10 second timeout
@@ -104,11 +113,15 @@ function App() {
                       }
                       
                       setUserData(userData);
+                      // Sync PDF count with actual deck count
+                      subscriptionService.syncCurrentPdfCount(userData.decks?.length || 0);
                     } else {
                       console.log('No user data found in Firestore, creating new user document');
                       await setDoc(userDocRef, INITIAL_USER_DATA);
                       console.log('New user document created with initial data');
                       setUserData(INITIAL_USER_DATA);
+                      // Sync PDF count with actual deck count
+                      subscriptionService.syncCurrentPdfCount(0);
                     }
                     console.log('Setting status to authenticated');
                     setAppStatus('authenticated');
@@ -175,21 +188,64 @@ function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+  // Persist activeView to localStorage
+  useEffect(() => {
+    localStorage.setItem('activeView', activeView);
+  }, [activeView]);
+
+  // Persist activeDeckId to localStorage
+  useEffect(() => {
+    if (activeDeckId) {
+      localStorage.setItem('activeDeckId', activeDeckId);
+    } else {
+      localStorage.removeItem('activeDeckId');
+    }
+  }, [activeDeckId]);
+
+  // Persist lastAction to localStorage
+  useEffect(() => {
+    if (lastAction) {
+      localStorage.setItem('lastAction', JSON.stringify(lastAction));
+    } else {
+      localStorage.removeItem('lastAction');
+    }
+  }, [lastAction]);
+
   const toggleTheme = () => setTheme(prevTheme => prevTheme === 'dark' ? 'light' : 'dark');
 
 
-  const handleGenerate = useCallback(async (text: string, fileName: string) => {
+  const handleGenerate = useCallback(async (text: string, fileName: string, filters: FlashcardFilters, totalPages: number = 0) => {
     setAppStatus('loading');
     setError(null);
     setLastAction(null);
+    
     try {
-      console.log('Starting flashcard generation with text length:', text.length);
-      const decks = await generateFlashcardsFromText(text, (progress, status) => {
+      // Check subscription limits before processing
+      if (!subscriptionService.canPerformAction('uploadPdf')) {
+        setError('Daily PDF upload limit reached. Upgrade to upload more PDFs.');
+        setAppStatus('authenticated');
+        return;
+      }
+
+      if (!subscriptionService.canUploadPdf(totalPages)) {
+        setError(`PDF too large for your current plan. Maximum ${subscriptionService.getCurrentTier() === 'free' ? '20' : '80'} pages allowed.`);
+        setAppStatus('authenticated');
+        return;
+      }
+
+      console.log('Starting optimized RAG-based flashcard generation with text length:', text.length);
+      const decks = await generateFlashcardsWithRAG(text, fileName, (progress, status) => {
         setLoadingProgress(progress);
         setLoadingStatus(status);
-      });
+      }, filters, totalPages);
       console.log('Generated decks:', decks);
+      
       if (decks && decks.length > 0) {
+        // Record usage
+        subscriptionService.recordUsage('uploadPdf');
+        const totalCards = decks.reduce((sum, chapter) => sum + chapter.flashcards.length, 0);
+        subscriptionService.recordUsage('generateFlashcards', totalCards);
+        
         const newDeck: UserDeck = {
           id: `deck-${Date.now()}`,
           pdfName: fileName,
@@ -202,9 +258,14 @@ function App() {
           deckId: newDeck.id,
           pdfName: newDeck.pdfName,
           chaptersCount: newDeck.flashcardDecks.length,
-          totalCards: newDeck.flashcardDecks.reduce((sum, chapter) => sum + chapter.flashcards.length, 0)
+          totalCards: totalCards
         });
-        setUserData(prev => prev ? { ...prev, decks: [...prev.decks, newDeck] } : { ...INITIAL_USER_DATA, decks: [newDeck] });
+        setUserData(prev => {
+          const newUserData = prev ? { ...prev, decks: [...prev.decks, newDeck] } : { ...INITIAL_USER_DATA, decks: [newDeck] };
+          // Update current PDF count in subscription service
+          subscriptionService.updateCurrentPdfCount(newUserData.decks.length);
+          return newUserData;
+        });
         setActiveDeckId(newDeck.id);
         setActiveView('study');
         setAppStatus('authenticated');
@@ -220,12 +281,19 @@ function App() {
   }, []);
 
   const activeDeck = userData?.decks.find(d => d.id === activeDeckId);
-  const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
+  const [currentChapterIndex, setCurrentChapterIndex] = useState(() => {
+    const saved = localStorage.getItem('currentChapterIndex');
+    return saved ? parseInt(saved, 10) : 0;
+  });
 
   useEffect(() => {
-    setCurrentChapterIndex(0);
     setLastAction(null);
   }, [activeDeckId]);
+
+  // Persist currentChapterIndex to localStorage
+  useEffect(() => {
+    localStorage.setItem('currentChapterIndex', currentChapterIndex.toString());
+  }, [currentChapterIndex]);
 
   const updateStudyProgress = (prevUserData: UserData, masteredIncrement: number): ProgressData => {
     const progress = prevUserData.progress;
@@ -247,12 +315,61 @@ function App() {
     }
     
     const newAchievements = [...progress.achievements];
-    if (newStreak > 0 && !progress.achievements.some(a => a.id === 'streak1')) {
-      newAchievements.push({ id: 'streak1', title: 'Fire Starter', description: 'Started your first streak', icon: 'fire' });
+    
+    // Streak achievements
+    if (newStreak >= 3 && !progress.achievements.some(a => a.id === 'streak3')) {
+      newAchievements.push({ id: 'streak3', title: '3 Day Streak', description: 'Complete 3 day streak', icon: 'fire' });
     }
+    if (newStreak >= 7 && !progress.achievements.some(a => a.id === 'streak7')) {
+      newAchievements.push({ id: 'streak7', title: 'Week Warrior', description: 'Complete 1 week streak', icon: 'fire' });
+    }
+    if (newStreak >= 30 && !progress.achievements.some(a => a.id === 'streak30')) {
+      newAchievements.push({ id: 'streak30', title: 'Month Master', description: 'Complete 30 day streak', icon: 'fire' });
+    }
+    
+    // Mastered cards achievements
     const totalMastered = prevUserData.decks.reduce((sum, deck) => sum + deck.knownCards.length, 0) + masteredIncrement;
-    if (totalMastered >= 10 && !progress.achievements.some(a => a.id === 'mastered10')) {
-      newAchievements.push({ id: 'mastered10', title: 'Quick Learner', description: 'Mastered 10 cards', icon: 'target'});
+    if (totalMastered >= 20 && !progress.achievements.some(a => a.id === 'mastered20')) {
+      newAchievements.push({ id: 'mastered20', title: 'Card Master', description: 'Mastered 20 cards', icon: 'target'});
+    }
+    if (totalMastered >= 50 && !progress.achievements.some(a => a.id === 'mastered50')) {
+      newAchievements.push({ id: 'mastered50', title: 'Knowledge Seeker', description: 'Mastered 50 cards', icon: 'target'});
+    }
+    if (totalMastered >= 100 && !progress.achievements.some(a => a.id === 'mastered100')) {
+      newAchievements.push({ id: 'mastered100', title: 'Achievement Hunter', description: 'Mastered 100 cards', icon: 'target'});
+    }
+    if (totalMastered >= 250 && !progress.achievements.some(a => a.id === 'mastered250')) {
+      newAchievements.push({ id: 'mastered250', title: 'Study Legend', description: 'Mastered 250 cards', icon: 'target'});
+    }
+    
+    // Studied cards achievements (total cards studied including revise cards)
+    const totalStudied = prevUserData.decks.reduce((sum, deck) => sum + deck.knownCards.length + deck.reviseCards.length, 0) + masteredIncrement;
+    if (totalStudied >= 100 && !progress.achievements.some(a => a.id === 'studied100')) {
+      newAchievements.push({ id: 'studied100', title: 'Study Champion', description: 'Studied 100 cards', icon: 'target'});
+    }
+    if (totalStudied >= 500 && !progress.achievements.some(a => a.id === 'studied500')) {
+      newAchievements.push({ id: 'studied500', title: 'Learning Legend', description: 'Studied 500 cards', icon: 'target'});
+    }
+    if (totalStudied >= 1000 && !progress.achievements.some(a => a.id === 'studied1000')) {
+      newAchievements.push({ id: 'studied1000', title: 'Knowledge Giant', description: 'Studied 1000 cards', icon: 'target'});
+    }
+    
+    // PDF upload achievements
+    const totalPDFs = prevUserData.decks.length;
+    if (totalPDFs >= 3 && !progress.achievements.some(a => a.id === 'pdf3')) {
+      newAchievements.push({ id: 'pdf3', title: 'PDF Collector', description: 'Uploaded 3 PDFs', icon: 'target'});
+    }
+    if (totalPDFs >= 10 && !progress.achievements.some(a => a.id === 'pdf10')) {
+      newAchievements.push({ id: 'pdf10', title: 'Document Master', description: 'Uploaded 10 PDFs', icon: 'target'});
+    }
+    
+    // Weekly progress achievements
+    const weeklyTotal = newWeeklyProgress.reduce((sum, day) => sum + day, 0);
+    if (weeklyTotal >= 100 && !progress.achievements.some(a => a.id === 'weekly100')) {
+      newAchievements.push({ id: 'weekly100', title: 'Weekly Warrior', description: 'Studied 100 cards in a week', icon: 'fire'});
+    }
+    if (weeklyTotal >= 500 && !progress.achievements.some(a => a.id === 'weekly500')) {
+      newAchievements.push({ id: 'weekly500', title: 'Power Week', description: 'Studied 500 cards in a week', icon: 'fire'});
     }
 
     return { ...progress, dayStreak: newStreak, lastStudied: todayStr, weeklyProgress: newWeeklyProgress, achievements: newAchievements };
@@ -414,6 +531,13 @@ function App() {
         setLastAction(null);
       }
       
+      // Notify subscription service about PDF deletion
+      // Note: This doesn't decrease the daily upload count to prevent abuse
+      subscriptionService.onPdfDeleted();
+      
+      // Update current PDF count in subscription service
+      subscriptionService.updateCurrentPdfCount(newDecks.length);
+      
       // Update progress
       const newProgress = updateStudyProgress({ ...prevUserData, decks: newDecks }, 1);
       return { decks: newDecks, progress: newProgress };
@@ -489,15 +613,29 @@ function App() {
       case 'myDecks':
         return <MyDecksView decks={userData.decks || []} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} onResetDeck={handleResetDeck} onDeleteDeck={handleDeleteDeck} isLoading={appStatus === 'loading'} error={error} />;
       case 'achievements':
-        return <AchievementsView progressData={userData.progress} />;
+        const achievementsMasteredCount = userData.decks.reduce((sum, deck) => sum + deck.knownCards.length, 0);
+        const achievementsSwipedCount = userData.decks.reduce((sum, deck) => sum + deck.knownCards.length + deck.reviseCards.length, 0);
+        const achievementsTotalPDFs = userData.decks.length;
+        return <AchievementsView 
+          progressData={userData.progress} 
+          masteredCount={achievementsMasteredCount}
+          swipedCards={achievementsSwipedCount}
+          totalPDFs={achievementsTotalPDFs}
+        />;
       case 'study':
         if (!activeDeck) return <div className="p-8 text-center text-slate-500 dark:text-slate-400"><h2 className="text-2xl font-semibold">No Deck Selected</h2><p className="mt-2">Please go to "My Decks" to choose a deck to study.</p></div>;
         return <StudyView pdfName={activeDeck.pdfName} decks={activeDeck.flashcardDecks} currentDeck={activeDeck.flashcardDecks[currentChapterIndex]} currentDeckIndex={currentChapterIndex} onSelectChapter={(i) => { setCurrentChapterIndex(i); setLastAction(null); }} onSwipeLeft={handleSwipeLeft} onSwipeRight={handleSwipeRight} lastAction={lastAction} onUndo={handleUndo} />;
       case 'revision':
         return <RevisionView reviseCards={activeDeck?.reviseCards || []} onStartChat={setSelectedCardForChat} onMarkAsKnown={handleMarkRevisedAsKnown} />;
       case 'progress':
-        const totalCards = activeDeck ? activeDeck.flashcardDecks.reduce((sum, d) => d.flashcards.length, 0) + activeDeck.knownCards.length + activeDeck.reviseCards.length : 0;
-        return <ProgressView progressData={userData.progress} masteredCount={activeDeck?.knownCards.length || 0} totalCards={totalCards} />;
+        // Calculate stats for all decks, not just active deck
+        const allDecksTotalCards = userData.decks.reduce((sum, deck) => 
+          sum + deck.flashcardDecks.reduce((deckSum, chapter) => deckSum + chapter.flashcards.length, 0) + 
+          deck.knownCards.length + deck.reviseCards.length, 0
+        );
+        const allDecksMasteredCount = userData.decks.reduce((sum, deck) => sum + deck.knownCards.length, 0);
+        const allDecksSwipedCount = userData.decks.reduce((sum, deck) => sum + deck.knownCards.length + deck.reviseCards.length, 0);
+        return <ProgressView progressData={userData.progress} masteredCount={allDecksMasteredCount} totalCards={allDecksTotalCards} swipedCards={allDecksSwipedCount} />;
       case 'profile':
         const cardsStudied = userData ? userData.decks.reduce((sum, deck) => sum + deck.knownCards.length + deck.reviseCards.length, 0) : 0;
         return <ProfileView user={currentUser} progressData={userData.progress} cardsStudied={cardsStudied} setActiveView={setActiveView} onLogout={handleLogout} onOpenModal={openModal} />;

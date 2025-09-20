@@ -1,6 +1,6 @@
 import React from 'react';
 import type { AppView } from '../App';
-import { StudyIcon, RevisionIcon, ProgressIcon, ProfileIcon, BookOpenIcon } from './icons/AppIcons';
+import { StudyIcon, RevisionIcon, ProgressIcon, ProfileIcon, BookOpenIcon, TargetIcon } from './icons/AppIcons';
 
 interface BottomNavProps {
   activeView: AppView;
@@ -32,6 +32,7 @@ const BottomNav: React.FC<BottomNavProps> = ({ activeView, setActiveView }) => {
     { view: 'study' as AppView, label: 'Study', Icon: StudyIcon },
     { view: 'revision' as AppView, label: 'Revision', Icon: RevisionIcon },
     { view: 'progress' as AppView, label: 'Progress', Icon: ProgressIcon },
+    { view: 'achievements' as AppView, label: 'Achievements', Icon: TargetIcon },
     { view: 'myDecks' as AppView, label: 'My Decks', Icon: BookOpenIcon },
     { view: 'profile' as AppView, label: 'Profile', Icon: ProfileIcon },
   ];
