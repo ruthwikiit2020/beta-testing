@@ -3,10 +3,15 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Production build
+# Build outputs
 dist/
 build/
+.vite/
+.next/
+out/
 
 # Environment variables
 .env
@@ -15,34 +20,47 @@ build/
 .env.test.local
 .env.production.local
 
-# IDE
+# IDE and editor files
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# OS
+# OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
 
 # Logs
-logs
+logs/
 *.log
 
 # Runtime data
-pids
+pids/
 *.pid
 *.seed
 *.pid.lock
 
 # Coverage directory used by tools like istanbul
 coverage/
+*.lcov
+
+# nyc test coverage
+.nyc_output/
 
 # Dependency directories
 jspm_packages/
 
 # Optional npm cache directory
 .npm
+
+# Optional eslint cache
+.eslintcache
 
 # Optional REPL history
 .node_repl_history
@@ -57,20 +75,42 @@ jspm_packages/
 .cache
 .parcel-cache
 
-# next.js build output
-.next
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
 
-# nuxt.js build output
-.nuxt
+# Vercel
+.vercel
 
-# vuepress build output
-.vuepress/dist
+# Netlify
+.netlify
 
-# Serverless directories
-.serverless
+# Temporary folders
+tmp/
+temp/
 
-# FuseBox cache
-.fusebox/
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
 
-# DynamoDB Local files
-.dynamodb/
+# Testing
+coverage/
+.nyc_output/
+
+# Storybook build outputs
+.out
+.storybook-out
+
+# Temporary files
+*.tmp
+*.temp
+
+# Local development
+.local
