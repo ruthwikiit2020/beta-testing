@@ -62,13 +62,13 @@ const StudyView: React.FC<StudyViewProps> = ({
   }
 
   return (
-    <div className="grid md:grid-cols-12 gap-x-8 max-w-screen-xl mx-auto px-4">
+    <div className="grid md:grid-cols-12 gap-x-8 max-w-screen-xl mx-auto px-4 min-h-screen">
       {/* Integrated Chapter Sidebar for Desktop */}
       <aside className="hidden md:block md:col-span-4 lg:col-span-3">
-         <div className="bg-white dark:bg-brand-surface border border-slate-200 dark:border-slate-800 rounded-xl p-4 h-full flex flex-col sticky top-4">
+         <div className="bg-white dark:bg-brand-surface border border-slate-200 dark:border-slate-800 rounded-xl p-4 h-screen flex flex-col sticky top-4">
            <h2 className="text-xl font-bold mb-1 truncate text-slate-800 dark:text-slate-200" title={pdfName}>{pdfName}</h2>
            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">Chapters</p>
-           <div className="overflow-y-auto pr-2 flex-grow">
+           <div className="overflow-y-auto pr-2 flex-grow min-h-0">
             <ChapterList 
                 decks={decks}
                 currentDeckIndex={currentDeckIndex}
@@ -79,7 +79,7 @@ const StudyView: React.FC<StudyViewProps> = ({
       </aside>
 
       {/* Main Content */}
-      <main className="md:col-span-8 lg:col-span-9 flex flex-col items-center h-full">
+      <main className="md:col-span-8 lg:col-span-9 flex flex-col items-center min-h-screen">
         {/* Mobile Chapter Selector Dropdown */}
         <div className="w-full max-w-sm md:hidden mb-4">
             <select
@@ -111,7 +111,7 @@ const StudyView: React.FC<StudyViewProps> = ({
              <div className="w-10 h-10"></div> {/* Spacer */}
         </div>
             
-        <div className="flex-grow flex items-center justify-center w-full mt-4">
+        <div className="flex-1 flex items-center justify-center w-full mt-4 max-h-[60vh]">
             <FlashcardStack
                 ref={stackRef}
                 key={currentDeckIndex} 
@@ -121,7 +121,7 @@ const StudyView: React.FC<StudyViewProps> = ({
             />
         </div>
 
-        <div className="mt-6 flex justify-center items-center w-full max-w-sm mx-auto gap-8">
+        <div className="mt-6 flex justify-center items-center w-full max-w-sm mx-auto gap-8 pb-8">
             <ActionButton onClick={() => handleActionClick('left')} className="bg-brand-secondary" label="Revise">
                 <XIcon className="w-8 h-8 text-white" />
             </ActionButton>

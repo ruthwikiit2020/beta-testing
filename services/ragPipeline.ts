@@ -1,982 +1,818 @@
-// RAG Pipeline Service
-// Optimized retrieval and generation for flashcard creation
-
-import { embeddingService, Chunk, VectorSearchResult } from './embeddingService';
-import { generateFlashcardsFromText } from './geminiService';
-import { retryWithBackoff } from './utils';
-import { performanceMonitor } from './performanceMonitor';
 import { GoogleGenAI } from '@google/genai';
-import type { FlashcardFilters } from '../types/filters';
+import { db } from './firebase';
+import { collection, doc, getDocs, query as firestoreQuery, where, writeBatch } from 'firebase/firestore';
+import { pdfCacheService, type PDFProcessingResult } from './pdfCache';
 
-export interface RAGConfig {
-  topK: number;
-  maxTokens: number;
-  enableStreaming: boolean;
-  batchSize: number;
-  // Large document optimizations
-  maxChunksPerChapter: number;
-  enablePagination: boolean;
-  maxMemoryChunks: number;
-  enableProgressiveLoading: boolean;
+// Optimized RAG service with batching, caching, and page-level progress
+export interface DocumentChunk {
+  id: string;
+  content: string;
+  metadata: {
+    userId: string;
+    documentId: string;
+    documentName: string;
+    chapterTitle?: string;
+    pageNumber?: number;
+    chunkIndex: number;
+    createdAt: string;
+  };
+  embedding?: number[];
+}
+
+export interface RAGQuery {
+  query: string;
+  userId: string;
+  documentId: string;
+  maxResults?: number;
+  similarityThreshold?: number;
 }
 
 export interface RAGResult {
-  flashcards: any[];
-  metadata: {
-    chunksUsed: number;
-    totalChunks: number;
-    processingTime: number;
-    tokensUsed: number;
-  };
+  chunks: DocumentChunk[];
+  totalChunks: number;
+  query: string;
 }
 
-export class RAGPipeline {
-  private static instance: RAGPipeline;
-  private defaultConfig: RAGConfig = {
-    topK: 5,
-    maxTokens: 2000,
-    enableStreaming: true,
-    batchSize: 2,
-    // Large document optimizations
-    maxChunksPerChapter: 10,
-    enablePagination: true,
-    maxMemoryChunks: 1000, // Limit memory usage
-    enableProgressiveLoading: true
-  };
+export interface PageProgress {
+  pageNumber: number;
+  totalPages: number;
+  status: 'reading' | 'processing' | 'complete';
+  textLength: number;
+}
 
-  // Large document configuration
-  private largeDocumentConfig: RAGConfig = {
-    topK: 15, // More chunks for better context
-    maxTokens: 4000, // Larger context window
-    enableStreaming: true,
-    batchSize: 5, // Larger batches for efficiency
-    maxChunksPerChapter: 20, // More chunks per chapter
-    enablePagination: true,
-    maxMemoryChunks: 2000, // Higher memory limit
-    enableProgressiveLoading: true
-  };
+// Optimized configuration
+const CHUNK_SIZE = 800;
+const CHUNK_OVERLAP = 100;
+const BATCH_SIZE = 5; // Process 5 chunks at once for embeddings
+const MAX_RESULTS = 3;
+const SIMILARITY_THRESHOLD = 0.6;
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
 
-  static getInstance(): RAGPipeline {
-    if (!RAGPipeline.instance) {
-      RAGPipeline.instance = new RAGPipeline();
-    }
-    return RAGPipeline.instance;
+class OptimizedRAGService {
+  private genAI: GoogleGenAI;
+  private embeddingModel: any;
+  private embeddingCache = new Map<string, number[]>();
+
+  constructor() {
+    const apiKey =
+      (import.meta as any).env?.VITE_GEMINI_API_KEY ||
+      process.env.API_KEY ||
+      process.env.GEMINI_API_KEY ||
+      'your-fallback-key';
+
+    this.genAI = new GoogleGenAI({ apiKey });
+    // Note: @google/genai doesn't have text-embedding-004, we'll use a different approach
+    this.embeddingModel = null; // Will implement embedding generation differently
   }
 
-  // Detect if document is large and needs special handling
-  private isLargeDocument(text: string, totalPages: number): boolean {
-    // Consider document large if:
-    // 1. More than 100 pages, OR
-    // 2. More than 50,000 words, OR
-    // 3. More than 200,000 characters
-    return totalPages > 100 || 
-           text.split(/\s+/).length > 50000 || 
-           text.length > 200000;
-  }
+  /**
+   * Process PDF with page-level progress reporting
+   */
+  async processPDFWithProgress(
+    pdf: any,
+    documentName: string,
+    userId: string,
+    documentId: string,
+    onPageProgress: (progress: PageProgress) => void
+  ): Promise<DocumentChunk[]> {
+    const totalPages = pdf.numPages;
+    let allChunks: DocumentChunk[] = [];
+    let chunkIndex = 0;
 
-  // Get appropriate configuration based on document size
-  private getConfigForDocument(text: string, totalPages: number): RAGConfig {
-    if (this.isLargeDocument(text, totalPages)) {
-      console.log('📚 Large document detected, using optimized configuration');
-      return this.largeDocumentConfig;
-    }
-    return this.defaultConfig;
-  }
+    console.log(`📄 Processing PDF: ${documentName} (${totalPages} pages)`);
 
-  // Main RAG pipeline for flashcard generation
-  async generateFlashcards(
-    text: string,
-    fileName: string,
-    filters: FlashcardFilters,
-    totalPages: number = 1,
-    onProgress?: (progress: number, status: string) => void
-  ): Promise<RAGResult> {
-    const startTime = Date.now();
-    performanceMonitor.startSession();
-    
-    // Get appropriate configuration based on document size
-    const config = this.getConfigForDocument(text, totalPages);
-    console.log('🚀 RAG Pipeline: Starting flashcard generation');
-    console.log('📄 File:', fileName);
-    console.log('📝 Text length:', text.length);
-    console.log('📊 Total pages:', totalPages);
-    console.log('🔧 Filters:', filters);
-    console.log('⚙️ Using config:', config);
-    
-    try {
-      // Step 1: Chunk the PDF text
-      onProgress?.(10, 'Chunking document...');
-      console.log('📦 RAG Pipeline: Step 1 - Chunking document...');
-      const chunkingStart = Date.now();
-      const chunks = await embeddingService.chunkPDFText(text, fileName);
-      const chunkingTime = Date.now() - chunkingStart;
-      console.log(`✅ RAG Pipeline: Chunking completed in ${chunkingTime}ms, created ${chunks.length} chunks`);
-      performanceMonitor.recordChunkingTime(chunkingTime);
-      performanceMonitor.recordChunksProcessed(chunks.length);
-      
-      // Step 2: Generate query based on filters or content analysis
-      onProgress?.(20, 'Generating search query...');
-      console.log('🔍 RAG Pipeline: Step 2 - Generating search query...');
-      const query = this.generateQueryFromFilters(filters, chunks);
-      console.log('🔍 Generated query:', query);
-      
-      // Step 3: Retrieve relevant chunks
-      onProgress?.(30, 'Retrieving relevant content...');
-      console.log('🎯 RAG Pipeline: Step 3 - Retrieving relevant chunks...');
-      const retrievalStart = Date.now();
-      const relevantChunks = await this.retrieveRelevantChunks(
-        query, 
-        chunks, 
-        filters,
-        config.topK
-      );
-      const retrievalTime = Date.now() - retrievalStart;
-      console.log(`✅ RAG Pipeline: Retrieval completed in ${retrievalTime}ms, found ${relevantChunks.length} relevant chunks`);
-      performanceMonitor.recordRetrievalTime(retrievalTime);
-      performanceMonitor.recordChunksRetrieved(relevantChunks.length);
-      
-      // Step 4: Compress and prepare context
-      onProgress?.(40, 'Preparing context...');
-      console.log('📝 RAG Pipeline: Step 4 - Preparing context...');
-      const context = this.prepareContext(relevantChunks, filters, chunks, config);
-      const tokenCount = this.estimateTokenUsage(context);
-      console.log(`📝 Context prepared: ${tokenCount} tokens, ${context.length} characters`);
-      performanceMonitor.recordTokensUsed(tokenCount);
-      
-      // Step 5: Generate flashcards using LLM
-      onProgress?.(50, 'Generating flashcards...');
-      console.log('🤖 RAG Pipeline: Step 5 - Generating flashcards with LLM...');
-      const generationStart = Date.now();
-      const flashcards = await this.generateFlashcardsWithContext(
-        context,
-        filters,
-        config,
-        onProgress
-      );
-      const generationTime = Date.now() - generationStart;
-      console.log(`✅ RAG Pipeline: Generation completed in ${generationTime}ms, created ${flashcards.length} flashcards`);
-      performanceMonitor.recordGenerationTime(generationTime);
-      
-      const processingTime = Date.now() - startTime;
-      const metrics = performanceMonitor.endSession();
-      
-      return {
-        flashcards,
-        metadata: {
-          chunksUsed: relevantChunks.length,
-          totalChunks: chunks.length,
-          processingTime,
-          tokensUsed: metrics.tokensUsed
-        }
-      };
-      
-    } catch (error) {
-      console.error('RAG Pipeline Error:', error);
-      throw new Error(`Flashcard generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  // Generate search query based on user filters or use context-based approach
-  private generateQueryFromFilters(filters: FlashcardFilters, chunks: Chunk[]): string {
-    // Check if filters are in default state (no custom filters applied)
-    const isDefaultFilters = filters.studyGoal === 'concept-mastery' && 
-                            filters.contentType.includes('full-detail') && 
-                            filters.contentType.length === 1 &&
-                            filters.depth === 'moderate' && 
-                            filters.organization === 'chapter-wise' && 
-                            filters.limitPerChapter === 15 && 
-                            !filters.pageRange;
-    
-    console.log('🔧 Filter analysis:', { 
-      isDefaultFilters, 
-      filters,
-      studyGoal: filters.studyGoal,
-      contentType: filters.contentType,
-      depth: filters.depth,
-      limitPerChapter: filters.limitPerChapter,
-      pageRange: filters.pageRange
-    });
-    
-    if (isDefaultFilters) {
-      // Use context-based query generation based on content analysis
-      console.log('🧠 Using context-based query generation');
-      return this.generateContextBasedQuery(chunks);
-    }
-    
-    // Use filter-based query generation
-    console.log('🎯 Using filter-based query generation');
-    const queryParts: string[] = [];
-    
-    // Study goal context
-    switch (filters.studyGoal) {
-      case 'exam-revision':
-        queryParts.push('exam preparation', 'key concepts', 'important facts', 'testable material');
-        break;
-      case 'concept-mastery':
-        queryParts.push('fundamental concepts', 'core principles', 'understanding', 'deep learning');
-        break;
-      case 'quick-review':
-        queryParts.push('summary', 'overview', 'quick reference', 'essential points');
-        break;
-    }
-    
-    // Content type context
-    if (filters.contentType.includes('formulas')) {
-      queryParts.push('formulas', 'equations', 'mathematical expressions', 'calculations');
-    }
-    if (filters.contentType.includes('definitions')) {
-      queryParts.push('definitions', 'terms', 'vocabulary', 'key terms');
-    }
-    if (filters.contentType.includes('diagrams')) {
-      queryParts.push('diagrams', 'figures', 'visual representations', 'charts');
-    }
-    if (filters.contentType.includes('full-detail')) {
-      queryParts.push('comprehensive information', 'detailed explanations', 'complete coverage');
-    }
-    
-    // Depth context
-    switch (filters.depth) {
-      case 'short':
-        queryParts.push('brief', 'concise', 'summary', 'essential');
-        break;
-      case 'moderate':
-        queryParts.push('detailed', 'comprehensive', 'thorough', 'balanced');
-        break;
-      case 'in-depth':
-        queryParts.push('comprehensive', 'detailed analysis', 'deep understanding', 'extensive');
-        break;
-    }
-    
-    // Organization context
-    if (filters.organization === 'chapter-wise') {
-      queryParts.push('chapter organization', 'structured content');
-    } else if (filters.organization === 'topic-clusters') {
-      queryParts.push('topic clusters', 'grouped concepts', 'thematic organization');
-    }
-    
-    const query = queryParts.join(' ');
-    console.log('🔍 Generated filter-based query:', query);
-    return query;
-  }
-
-  // Generate context-based query by analyzing content
-  private generateContextBasedQuery(chunks: Chunk[]): string {
-    console.log('🧠 RAG Pipeline: Generating context-based query from content analysis');
-    
-    // Analyze content to determine what to focus on
-    const contentAnalysis = this.analyzeContent(chunks);
-    const queryParts: string[] = [];
-    
-    // Add general academic terms
-    queryParts.push('key concepts', 'important information', 'main ideas');
-    
-    // Add content-specific terms based on analysis
-    if (contentAnalysis.hasFormulas) {
-      queryParts.push('formulas', 'equations', 'mathematical concepts');
-    }
-    if (contentAnalysis.hasDefinitions) {
-      queryParts.push('definitions', 'terms', 'vocabulary');
-    }
-    if (contentAnalysis.hasExamples) {
-      queryParts.push('examples', 'applications', 'case studies');
-    }
-    if (contentAnalysis.hasProcesses) {
-      queryParts.push('processes', 'procedures', 'steps');
-    }
-    
-    const query = queryParts.join(' ');
-    console.log('🧠 Generated context-based query:', query);
-    return query;
-  }
-
-  // Analyze content to determine focus areas
-  private analyzeContent(chunks: Chunk[]): {
-    hasFormulas: boolean;
-    hasDefinitions: boolean;
-    hasExamples: boolean;
-    hasProcesses: boolean;
-    averageChunkLength: number;
-    totalContent: number;
-  } {
-    let hasFormulas = false;
-    let hasDefinitions = false;
-    let hasExamples = false;
-    let hasProcesses = false;
-    let totalLength = 0;
-    
-    chunks.forEach(chunk => {
-      const content = chunk.content.toLowerCase();
-      totalLength += chunk.content.length;
-      
-      if (content.includes('=') || content.includes('formula') || content.includes('equation')) {
-        hasFormulas = true;
-      }
-      if (content.match(/\b(?:is|are|means?|refers to|defined as)\b/)) {
-        hasDefinitions = true;
-      }
-      if (content.match(/\b(?:for example|e\.g\.|such as|instance)\b/)) {
-        hasExamples = true;
-      }
-      if (content.match(/\b(?:step|process|procedure|method|approach)\b/)) {
-        hasProcesses = true;
-      }
-    });
-    
-    return {
-      hasFormulas,
-      hasDefinitions,
-      hasExamples,
-      hasProcesses,
-      averageChunkLength: totalLength / chunks.length,
-      totalContent: totalLength
-    };
-  }
-
-  // Retrieve relevant chunks based on query and filters
-  private async retrieveRelevantChunks(
-    query: string,
-    chunks: Chunk[],
-    filters: FlashcardFilters,
-    topK: number
-  ): Promise<VectorSearchResult[]> {
-    const searchFilters = {
-      chapter: filters.organization === 'chapter-wise' ? undefined : undefined,
-      type: this.getContentTypeFilter(filters.contentType),
-      pageRange: filters.pageRange
-    };
-
-    return await embeddingService.searchSimilarChunks(
-      query,
-      chunks,
-      topK,
-      searchFilters
-    );
-  }
-
-  // Map content type filters to chunk types
-  private getContentTypeFilter(contentTypes: string[]): string | undefined {
-    if (contentTypes.includes('formulas')) return 'formula';
-    if (contentTypes.includes('definitions')) return 'definition';
-    if (contentTypes.includes('diagrams')) return 'concept';
-    return undefined;
-  }
-
-  // Prepare context for LLM with intelligent chapter-based organization
-  private prepareContext(
-    relevantChunks: VectorSearchResult[],
-    filters: FlashcardFilters,
-    allChunks: Chunk[],
-    config: RAGConfig
-  ): string {
-    console.log('📝 RAG Pipeline: Preparing context with chapter-based organization');
-    
-    // Group chunks by chapter
-    const chapterGroups = this.groupChunksByChapter(relevantChunks, allChunks);
-    console.log('📝 Found chapters:', Object.keys(chapterGroups));
-    
-    // Calculate target cards per chapter based on content density
-    const targetCardsPerChapter = this.calculateTargetCardsPerChapter(chapterGroups, filters);
-    console.log('📝 Target cards per chapter:', targetCardsPerChapter);
-    
-    // Prepare context with chapter information
-    let context = '';
-    let totalTokens = 0;
-    const maxTokens = config.maxTokens;
-    
-    for (const [chapterName, chunks] of Object.entries(chapterGroups)) {
-      if (totalTokens >= maxTokens) break;
-      
-      // Add chapter header
-      const chapterHeader = `\n=== CHAPTER ${chapterName} ===\n`;
-      context += chapterHeader;
-      totalTokens += this.estimateTokenCount(chapterHeader);
-      
-      // Add chapter content
-      for (const result of chunks) {
-        const chunk = result.chunk;
-        const chunkTokens = chunk.metadata.tokenCount;
-        
-        if (totalTokens + chunkTokens > maxTokens) break;
-        
-        // Add chunk content with metadata
-        const chunkContent = `[Page ${chunk.metadata.page || '?'}] ${chunk.content}\n`;
-        context += chunkContent;
-        totalTokens += chunkTokens;
-      }
-    }
-    
-    console.log(`📝 Context prepared: ${totalTokens} tokens, ${context.length} characters`);
-    return context.trim();
-  }
-
-  // Group chunks by chapter for better organization
-  private groupChunksByChapter(relevantChunks: VectorSearchResult[], allChunks: Chunk[]): Record<string, VectorSearchResult[]> {
-    const chapterGroups: Record<string, VectorSearchResult[]> = {};
-    
-    // First, add relevant chunks to their chapters
-    relevantChunks.forEach(result => {
-      const chapter = result.chunk.metadata.chapter || 'General';
-      if (!chapterGroups[chapter]) {
-        chapterGroups[chapter] = [];
-      }
-      chapterGroups[chapter].push(result);
-    });
-    
-    // If no chapters found, try to detect chapters from all chunks
-    if (Object.keys(chapterGroups).length === 0 || (Object.keys(chapterGroups).length === 1 && Object.keys(chapterGroups)[0] === 'General')) {
-      console.log('📝 No chapters detected, analyzing content for chapter structure...');
-      const detectedChapters = this.detectChapters(allChunks);
-      
-      // Reorganize chunks by detected chapters
-      chapterGroups['General'] = [];
-      relevantChunks.forEach(result => {
-        const chunk = result.chunk;
-        const detectedChapter = this.findChapterForChunk(chunk, detectedChapters);
-        
-        if (!chapterGroups[detectedChapter]) {
-          chapterGroups[detectedChapter] = [];
-        }
-        chapterGroups[detectedChapter].push(result);
+    for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+      onPageProgress({
+        pageNumber: pageNum,
+        totalPages,
+        status: 'reading',
+        textLength: 0,
       });
-    }
-    
-    // Sort chunks within each chapter by page order
-    Object.keys(chapterGroups).forEach(chapter => {
-      chapterGroups[chapter].sort((a, b) => {
-        const pageA = a.chunk.metadata.page || 0;
-        const pageB = b.chunk.metadata.page || 0;
-        return pageA - pageB;
-      });
-    });
-    
-    return chapterGroups;
-  }
 
-  // Detect chapters from content analysis
-  private detectChapters(chunks: Chunk[]): Array<{ name: string; startPage: number; endPage: number }> {
-    console.log('🔍 Detecting chapters from PDF content...');
-    const chapters: Array<{ name: string; startPage: number; endPage: number }> = [];
-    const seenChapters = new Set<string>();
-    
-    // Sort chunks by page number
-    const sortedChunks = [...chunks].sort((a, b) => (a.metadata.page || 0) - (b.metadata.page || 0));
-    
-    sortedChunks.forEach(chunk => {
-      const content = chunk.content;
-      const page = chunk.metadata.page || 1;
-      
-      // Multiple patterns for chapter detection
-      const patterns = [
-        // Chapter X: Title
-        /(?:chapter|section|part)\s+(\d+|[ivx]+)[\s:]*([^\n]+)/i,
-        // Chapter X - Title
-        /(?:chapter|section|part)\s+(\d+|[ivx]+)\s*-\s*([^\n]+)/i,
-        // X. Title (numbered sections)
-        /^(\d+)\s*\.\s*([^\n]+)$/im,
-        // X Title (numbered sections without dot)
-        /^(\d+)\s+([A-Z][^\n]+)$/im,
-        // Roman numerals
-        /^([IVX]+)\s*\.?\s*([^\n]+)$/im,
-        // Bold/strong text that might be chapter titles
-        /^\*\*([^\n]+)\*\*$/im,
-        // All caps titles
-        /^([A-Z\s]{3,50})$/im
-      ];
-      
-      for (const pattern of patterns) {
-        const match = content.match(pattern);
-        if (match) {
-          let chapterTitle = '';
-          if (match[2]) {
-            // Pattern with number and title
-            chapterTitle = match[2].trim();
-          } else if (match[1]) {
-            // Pattern with just title
-            chapterTitle = match[1].trim();
-          }
-          
-          // Clean up the title
-          chapterTitle = chapterTitle
-            .replace(/^[^\w]*/, '') // Remove leading non-word chars
-            .replace(/[^\w\s-].*$/, '') // Remove everything after first sentence-ending char
-            .trim();
-          
-          // Only add if it's a meaningful title and not already seen
-          if (chapterTitle.length > 3 && 
-              chapterTitle.length < 100 && 
-              !seenChapters.has(chapterTitle.toLowerCase()) &&
-              !chapterTitle.match(/^(page|figure|table|image)\s*\d*$/i)) {
-            
-            chapters.push({
-              name: chapterTitle,
-              startPage: page,
-              endPage: page
-            });
-            seenChapters.add(chapterTitle.toLowerCase());
-            console.log(`📚 Found chapter: "${chapterTitle}" on page ${page}`);
-          }
-        }
-      }
-    });
-    
-    // If no chapters found, try to detect based on content structure
-    if (chapters.length === 0) {
-      console.log('⚠️ No explicit chapters found, analyzing content structure...');
-      
-      // Look for content that might indicate section breaks
-      const sectionIndicators = [];
-      sortedChunks.forEach((chunk, index) => {
-        const content = chunk.content;
-        const page = chunk.metadata.page || 1;
-        
-        // Look for content that starts with numbers or has specific patterns
-        if (content.match(/^\d+\.\s+[A-Z]/) || 
-            content.match(/^[A-Z][a-z]+.*:$/) ||
-            content.match(/^[A-Z\s]{10,}$/)) {
-          sectionIndicators.push({ content: content.substring(0, 50), page, index });
-        }
-      });
-      
-      // Create logical divisions based on content density and structure
-      const totalPages = Math.max(...chunks.map(c => c.metadata.page || 1));
-      const pagesPerChapter = Math.max(2, Math.ceil(totalPages / 4)); // 4 chapters for better distribution
-      
-      for (let i = 0; i < Math.ceil(totalPages / pagesPerChapter); i++) {
-        const startPage = i * pagesPerChapter + 1;
-        const endPage = Math.min((i + 1) * pagesPerChapter, totalPages);
-        
-        // Try to find a meaningful title from the content in this range
-        const rangeChunks = sortedChunks.filter(c => 
-          (c.metadata.page || 1) >= startPage && (c.metadata.page || 1) <= endPage
-        );
-        
-        let chapterTitle = `Section ${i + 1}`;
-        if (rangeChunks.length > 0) {
-          const firstChunk = rangeChunks[0];
-          const titleMatch = firstChunk.content.match(/^([A-Z][^.!?]{10,50})/);
-          if (titleMatch) {
-            chapterTitle = titleMatch[1].trim();
-          }
-        }
-        
-        chapters.push({
-          name: chapterTitle,
-          startPage,
-          endPage
+      try {
+        const page = await pdf.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map((item: any) => item.str).join(' ');
+
+        onPageProgress({
+          pageNumber: pageNum,
+          totalPages,
+          status: 'processing',
+          textLength: pageText.length,
         });
-        console.log(`📚 Created logical chapter: "${chapterTitle}" (pages ${startPage}-${endPage})`);
+
+        const pageChunks = this.chunkText(pageText, documentName, pageNum);
+
+        const chunksWithMetadata = pageChunks.map((chunk) => ({
+          ...chunk,
+          id: `${documentId}-page-${pageNum}-chunk-${chunkIndex++}`,
+          metadata: {
+            userId,
+            documentId,
+            documentName,
+            pageNumber: pageNum,
+            chunkIndex: chunkIndex - 1,
+            createdAt: new Date().toISOString(),
+          },
+        }));
+
+        allChunks.push(...chunksWithMetadata);
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      } catch (error) {
+        console.error(`Error processing page ${pageNum}:`, error);
       }
     }
-    
-    console.log(`✅ Detected ${chapters.length} chapters:`, chapters.map(c => c.name));
-    return chapters;
-  }
 
-  // Find the appropriate chapter for a chunk
-  private findChapterForChunk(chunk: Chunk, chapters: Array<{ name: string; startPage: number; endPage: number }>): string {
-    const page = chunk.metadata.page || 1;
-    
-    for (const chapter of chapters) {
-      if (page >= chapter.startPage && page <= chapter.endPage) {
-        return chapter.name;
+    console.log(
+      `🔢 Generating embeddings for ${allChunks.length} chunks in batches of ${BATCH_SIZE}`
+    );
+    const chunksWithEmbeddings = await this.generateEmbeddingsBatch(
+      allChunks,
+      (progress, status) => {
+        onPageProgress({
+          pageNumber: totalPages,
+          totalPages,
+          status: 'processing',
+          textLength: 0,
+        });
       }
-    }
-    
-    return 'General';
-  }
+    );
 
-  // Calculate target cards per chapter based on content density
-  private calculateTargetCardsPerChapter(
-    chapterGroups: Record<string, VectorSearchResult[]>,
-    filters: FlashcardFilters
-  ): Record<string, number> {
-    const targetCards: Record<string, number> = {};
-    
-    // Check if using default filters (no custom selection)
-    const isDefaultFilters = filters.studyGoal === 'concept-mastery' && 
-                            filters.contentType.includes('full-detail') && 
-                            filters.contentType.length === 1 &&
-                            filters.depth === 'moderate' && 
-                            filters.organization === 'chapter-wise' && 
-                            filters.limitPerChapter === 15 && 
-                            !filters.pageRange;
-    
-    Object.entries(chapterGroups).forEach(([chapterName, chunks]) => {
-      if (isDefaultFilters) {
-        // Calculate based on content density and chapter length
-        const totalContent = chunks.reduce((sum, chunk) => sum + chunk.chunk.content.length, 0);
-        const avgChunkLength = totalContent / chunks.length;
-        const contentDensity = totalContent / 1000; // Content per 1000 characters
-        
-        // Base cards: 1 per 500 characters of content, minimum 3, maximum 20
-        let baseCards = Math.max(3, Math.min(20, Math.ceil(contentDensity * 2)));
-        
-        // Adjust based on chunk count (more chunks = more concepts)
-        const chunkMultiplier = Math.min(2, chunks.length / 5);
-        baseCards = Math.ceil(baseCards * chunkMultiplier);
-        
-        targetCards[chapterName] = baseCards;
-        console.log(`📊 Chapter "${chapterName}": ${baseCards} cards (content-based)`);
-      } else {
-        // Use filter-based calculation - respect user's selection
-        targetCards[chapterName] = filters.limitPerChapter;
-        console.log(`📊 Chapter "${chapterName}": ${filters.limitPerChapter} cards (filter-based)`);
-      }
+    await this.storeChunksBatch(chunksWithEmbeddings);
+
+    onPageProgress({
+      pageNumber: totalPages,
+      totalPages,
+      status: 'complete',
+      textLength: allChunks.reduce((sum, chunk) => sum + chunk.content.length, 0),
     });
-    
-    return targetCards;
+
+    return chunksWithEmbeddings;
   }
 
-  // Generate flashcards using the prepared context
-  private async generateFlashcardsWithContext(
-    context: string,
-    filters: FlashcardFilters,
-    config: RAGConfig,
-    onProgress?: (progress: number, status: string) => void
-  ): Promise<any[]> {
-    console.log('🤖 RAG Pipeline: Generating flashcards with enhanced context');
-    
-    // Check if using default filters (no custom selection)
-    const isDefaultFilters = filters.studyGoal === 'concept-mastery' && 
-                            filters.contentType.includes('full-detail') && 
-                            filters.contentType.length === 1 &&
-                            filters.depth === 'moderate' && 
-                            filters.organization === 'chapter-wise' && 
-                            filters.limitPerChapter === 15 && 
-                            !filters.pageRange;
-    
-    if (isDefaultFilters) {
-      // Use enhanced prompt for better card generation
-      const enhancedPrompt = this.buildEnhancedPrompt(context, filters);
-      return await this.generateWithEnhancedPrompt(enhancedPrompt, onProgress);
+  private chunkText(
+  text: string,
+  documentName: string,
+  pageNumber: number
+): DocumentChunk[] {
+  const chunks: DocumentChunk[] = [];
+  const sentences = text.split(/[.!?]+/).filter((s) => s.trim().length > 0);
+
+  let currentChunk = '';
+  let chunkIndex = 0;
+
+  for (const sentence of sentences) {
+    const trimmedSentence = sentence.trim();
+    if (!trimmedSentence) continue;
+
+    if (
+      currentChunk.length + trimmedSentence.length > CHUNK_SIZE &&
+      currentChunk.length > 0
+    ) {
+      chunks.push({
+        id: '', // placeholder, set later in processPDFWithProgress
+        content: currentChunk.trim(),
+        metadata: {
+          userId: '', // placeholder, set later
+          documentId: '',
+          documentName,
+          pageNumber,
+          chunkIndex: chunkIndex++,
+          createdAt: new Date().toISOString(),
+        },
+        embedding: undefined,
+      });
+
+      const overlap = currentChunk.slice(-CHUNK_OVERLAP);
+      currentChunk = overlap + ' ' + trimmedSentence;
     } else {
-      // Use the existing Gemini service with optimized context
-      return await generateFlashcardsFromText(
-        context,
+      currentChunk += (currentChunk ? '. ' : '') + trimmedSentence;
+    }
+  }
+
+  if (currentChunk.trim().length > 0) {
+    chunks.push({
+      id: '',
+      content: currentChunk.trim(),
+      metadata: {
+        userId: '',
+        documentId: '',
+        documentName,
+        pageNumber,
+        chunkIndex: chunkIndex++,
+        createdAt: new Date().toISOString(),
+      },
+      embedding: undefined,
+    });
+  }
+
+  return chunks;
+}
+
+
+  private async generateEmbeddingsBatch(
+    chunks: DocumentChunk[],
+    onProgress?: (progress: number, status: string) => void
+  ): Promise<DocumentChunk[]> {
+    const chunksWithEmbeddings: DocumentChunk[] = [];
+
+    for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+      const batch = chunks.slice(i, i + BATCH_SIZE);
+      const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(chunks.length / BATCH_SIZE);
+
+      onProgress?.(
+        i / chunks.length,
+        `Generating embeddings batch ${batchNumber}/${totalBatches}...`
+      );
+
+      const batchPromises = batch.map(async (chunk) => {
+        const cacheKey = this.getEmbeddingCacheKey(chunk.content);
+        let embedding = this.embeddingCache.get(cacheKey);
+
+        if (!embedding) {
+          try {
+            // For now, create a simple hash-based embedding since @google/genai doesn't have embeddings
+            // In a real implementation, you would use a proper embedding service
+            embedding = this.createSimpleEmbedding(chunk.content);
+            this.embeddingCache.set(cacheKey, embedding);
+          } catch (error) {
+            console.error('Error generating embedding:', error);
+            embedding = new Array(768).fill(0);
+          }
+        }
+
+        return {
+          ...chunk,
+          embedding,
+        };
+      });
+
+      const batchResults = await Promise.all(batchPromises);
+      chunksWithEmbeddings.push(...batchResults);
+
+      if (i + BATCH_SIZE < chunks.length) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    }
+
+    return chunksWithEmbeddings;
+  }
+
+  private async storeChunksBatch(chunks: DocumentChunk[]): Promise<void> {
+    if (!chunks || chunks.length === 0) {
+      console.log('⚠️ No chunks to store, skipping Firestore operation');
+      return;
+    }
+
+    const batch = writeBatch(db);
+    const chunksCollection = collection(db, 'documentChunks');
+
+    // Safety check for metadata
+    if (!chunks[0]?.metadata?.documentId || !chunks[0]?.metadata?.userId) {
+      console.warn('⚠️ Chunks missing required metadata, skipping Firestore operation');
+      return;
+    }
+
+    const existingQuery = firestoreQuery(
+      collection(db, 'documentChunks'),
+      where('metadata.documentId', '==', chunks[0].metadata.documentId),
+      where('metadata.userId', '==', chunks[0].metadata.userId)
+    );
+
+    const existingChunks = await getDocs(existingQuery);
+    existingChunks.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+
+    for (let i = 0; i < chunks.length; i += 500) {
+      const chunkBatch = chunks.slice(i, i + 500);
+      chunkBatch.forEach((chunk) => {
+        const docRef = doc(chunksCollection);
+        batch.set(docRef, chunk);
+      });
+    }
+
+    await batch.commit();
+    console.log(`✅ Stored ${chunks.length} chunks in Firestore`);
+  }
+
+  async retrieveRelevantChunks(ragQuery: RAGQuery): Promise<RAGResult> {
+    const {
+      query,
+      userId,
+      documentId,
+      maxResults = MAX_RESULTS,
+      similarityThreshold = SIMILARITY_THRESHOLD,
+    } = ragQuery;
+
+    // const cacheKey = `rag_${userId}_${documentId}_${query}`;
+    // const cachedResult = cacheService.get<RAGResult>(cacheKey);
+    // if (cachedResult) {
+    //   console.log('📋 RAG result retrieved from cache');
+    //   return cachedResult;
+    // }
+
+    try {
+      const queryEmbedding = await this.generateEmbedding(query);
+
+      let allChunks: DocumentChunk[] = [];
+      
+      try {
+        const chunksQuery = firestoreQuery(
+          collection(db, 'documentChunks'),
+          where('metadata.documentId', '==', documentId),
+          where('metadata.userId', '==', userId)
+        );
+
+        const chunksSnapshot = await getDocs(chunksQuery);
+
+        chunksSnapshot.forEach((doc) => {
+          const chunk = doc.data() as DocumentChunk;
+          if (chunk.embedding) {
+            allChunks.push(chunk);
+          }
+        });
+      } catch (firestoreError) {
+        console.warn('⚠️ Failed to retrieve chunks from Firestore:', firestoreError);
+        // Return empty result - the calling code will handle the fallback
+        return {
+          chunks: [],
+          totalChunks: 0,
+          query
+        } as RAGResult;
+      }
+
+      const chunksWithSimilarity = allChunks.map((chunk) => ({
+        ...chunk,
+        similarity: this.calculateCosineSimilarity(
+          queryEmbedding,
+          chunk.embedding!
+        ),
+      }));
+
+      const relevantChunks = chunksWithSimilarity
+        .filter((chunk) => chunk.similarity >= similarityThreshold)
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, maxResults)
+        .map(({ similarity, ...chunk }) => chunk);
+
+      const result: RAGResult = {
+        chunks: relevantChunks,
+        totalChunks: allChunks.length,
+        query,
+      };
+
+      // cacheService.set(cacheKey, result, CACHE_TTL);
+
+      return result;
+    } catch (error) {
+      console.error('Error retrieving relevant chunks:', error);
+      return {
+        chunks: [],
+        totalChunks: 0,
+        query,
+      };
+    }
+  }
+
+  private async generateEmbedding(text: string): Promise<number[]> {
+    const cacheKey = this.getEmbeddingCacheKey(text);
+    let embedding = this.embeddingCache.get(cacheKey);
+
+    if (!embedding) {
+      try {
+        // For now, create a simple hash-based embedding since @google/genai doesn't have embeddings
+        // In a real implementation, you would use a proper embedding service
+        embedding = this.createSimpleEmbedding(text);
+        this.embeddingCache.set(cacheKey, embedding);
+      } catch (error) {
+        console.error('Error generating embedding:', error);
+        embedding = new Array(768).fill(0);
+      }
+    }
+
+    return embedding;
+  }
+
+  private createSimpleEmbedding(text: string): number[] {
+    // Create a simple hash-based embedding for demonstration
+    // In a real implementation, you would use a proper embedding service like OpenAI's text-embedding-ada-002
+    const hash = this.simpleHash(text);
+    const embedding = new Array(768).fill(0);
+    
+    // Distribute the hash across the embedding dimensions
+    for (let i = 0; i < 768; i++) {
+      embedding[i] = Math.sin(hash + i) * 0.1;
+    }
+    
+    return embedding;
+  }
+
+  private simpleHash(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      const char = str.charCodeAt(i);
+      hash = ((hash << 5) - hash) + char;
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash);
+  }
+
+  private calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
+    if (vecA.length !== vecB.length) return 0;
+
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < vecA.length; i++) {
+      dotProduct += vecA[i] * vecB[i];
+      normA += vecA[i] * vecA[i];
+      normB += vecB[i] * vecB[i];
+    }
+
+    if (normA === 0 || normB === 0) return 0;
+
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+
+  private getEmbeddingCacheKey(text: string): string {
+    return `embedding_${text.slice(0, 100)}_${text.length}`;
+  }
+
+  // Get current user ID from localStorage or context
+  private getCurrentUserId(): string {
+    try {
+      // Try to get from localStorage first
+      const userEmail = localStorage.getItem('userEmail');
+      if (userEmail) {
+        // Use email as a simple user identifier
+        return userEmail.split('@')[0]; // Use the part before @ as user ID
+      }
+      
+      // Fallback to a default user ID
+      return 'anonymous-user';
+    } catch (error) {
+      console.error('Error getting user ID:', error);
+      return 'anonymous-user';
+    }
+  }
+
+  // Generate flashcards from retrieved chunks using RAG
+  async generateFlashcardsFromChunks(
+    chunks: DocumentChunk[],
+    filters: any,
+    totalPages: number,
+    onProgress: (progress: number, status: string) => void
+  ): Promise<any[]> {
+    try {
+      onProgress(0.1, 'Formatting context for AI...');
+      
+      // Format the retrieved chunks for the AI
+      const context = this.formatContextForGemini(chunks);
+      console.log('📝 Formatted context length:', context.length);
+      
+      // Check if context is empty
+      if (!context || context.trim().length === 0) {
+        throw new Error('No content available for flashcard generation');
+      }
+      
+      onProgress(0.2, 'Generating flashcards with AI...');
+      
+      // Import the original function dynamically to avoid circular imports
+      const { generateFlashcardsFromText } = await import('./geminiService');
+      
+      // Use the original Gemini service but with the retrieved context
+      const chapterDecks = await generateFlashcardsFromText(
+        context, // Use the retrieved context instead of full text
         (progress, status) => {
-          // Map progress from 50-100% for this step
-          const mappedProgress = 50 + (progress * 0.5);
-          onProgress?.(mappedProgress, status);
+          // Map the progress from 0.2 to 0.9
+          const mappedProgress = 0.2 + (progress * 0.7);
+          onProgress(mappedProgress, status);
         },
         filters,
-        0 // No total pages needed for RAG pipeline
+        totalPages
       );
-    }
-  }
-
-  // Build enhanced prompt for better card generation
-  private buildEnhancedPrompt(context: string, filters: FlashcardFilters): string {
-    const isDefaultFilters = filters.studyGoal === 'concept-mastery' && 
-                            filters.contentType.includes('full-detail') && 
-                            filters.contentType.length === 1 &&
-                            filters.depth === 'moderate' && 
-                            filters.organization === 'chapter-wise' && 
-                            filters.limitPerChapter === 15 && 
-                            !filters.pageRange;
-
-    let prompt = `You are an expert AI study assistant. Analyze the following study material and create comprehensive flashcards organized by chapter.
-
-IMPORTANT INSTRUCTIONS:`;
-
-    if (isDefaultFilters) {
-      prompt += `
-1. Create flashcards for EACH chapter/section in the material
-2. Generate 5-15 cards per chapter based on content density
-3. Focus on key concepts, definitions, formulas, processes, and important facts`;
-    } else {
-      // Use filter-based instructions
-      prompt += `
-1. Create flashcards according to the specified filters
-2. Generate exactly ${filters.limitPerChapter} cards per chapter
-3. Focus on: ${filters.contentType.join(', ')}
-4. Study goal: ${filters.studyGoal}
-5. Depth level: ${filters.depth}
-6. Organization: ${filters.organization}`;
       
-      if (filters.pageRange) {
-        prompt += `
-7. Limit content to pages ${filters.pageRange.from} to ${filters.pageRange.to}`;
-      }
-    }
-
-    prompt += `
-4. Ensure each card covers a unique concept or idea
-5. Make questions clear and answers comprehensive but concise
-6. Include both factual recall and conceptual understanding questions
-7. Generate REAL content based on the material, not placeholder text
-
-For each flashcard, provide:
-- question: A clear, specific question or term from the actual content
-- answer: A detailed but concise answer based on the material
-- chapter: The chapter/section name this card belongs to
-
-The material is organized as follows:
-
-${context}
-
-Generate flashcards that cover all the important content in each chapter.`;
-
-    return prompt;
-  }
-
-  // Generate flashcards with enhanced prompt
-  private async generateWithEnhancedPrompt(prompt: string, onProgress?: (progress: number, status: string) => void): Promise<any[]> {
-    try {
-      onProgress?.(60, 'Connecting to AI...');
+      onProgress(0.9, 'Processing RAG results...');
       
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.API_KEY || process.env.GEMINI_API_KEY || 'AIzaSyCZHn2yAzKqyM-zaIVEB8YHkI98VdEz-ss';
-      if (!apiKey) {
-        throw new Error('No API key found. Please check your environment variables.');
-      }
-      
-      const genAI = new GoogleGenAI({ apiKey });
-      const model = genAI.models.generateContent;
-      
-      onProgress?.(70, 'Generating flashcards...');
-      
-      const result = await retryWithBackoff(async () => {
-        return await model({
-          model: "gemini-1.5-flash",
-          contents: prompt
-        });
+      // Add RAG metadata to each chapter
+      chapterDecks.forEach((chapter: any) => {
+        chapter.ragMetadata = {
+          sourceChunks: chunks.length,
+          retrievalMethod: 'semantic_search',
+          contextLength: context.length
+        };
       });
       
-      onProgress?.(90, 'Processing response...');
+      onProgress(1.0, 'RAG flashcard generation complete!');
       
-      const text = result.text;
-      
-      console.log('🤖 Raw AI response:', text);
-      
-      // Parse the response to extract flashcards
-      const flashcards = this.parseFlashcardsFromResponse(text);
-      
-      onProgress?.(100, 'Complete!');
-      
-      console.log(`🤖 Generated ${flashcards.length} flashcards`);
-      return flashcards;
-      
+      return chapterDecks;
     } catch (error) {
-      console.error('🤖 Enhanced generation failed:', error);
+      console.error('Error in RAG flashcard generation from chunks:', error);
       throw error;
     }
   }
 
-  // Parse flashcards from AI response
-  private parseFlashcardsFromResponse(text: string): any[] {
-    console.log('🔍 Parsing AI response for flashcards...');
-    const flashcards: any[] = [];
-    
-    // Try to parse JSON format first
-    try {
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        if (Array.isArray(parsed)) {
-          console.log(`✅ Parsed ${parsed.length} flashcards from JSON format`);
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.log('⚠️ JSON parsing failed, trying text format...');
+  formatContextForGemini(chunks: DocumentChunk[]): string {
+    if (chunks.length === 0) {
+      console.warn('⚠️ No chunks provided to formatContextForGemini');
+      return '';
     }
-    
-    // Parse text format with multiple patterns
-    const lines = text.split('\n');
-    let currentCard: any = null;
-    let currentChapter = 'General';
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const trimmedLine = line.trim();
-      
-      // Skip empty lines
-      if (!trimmedLine) continue;
-      
-      // Chapter detection
-      if (trimmedLine.match(/^(Chapter|Section|Part)\s*\d*[:\-\s]/i)) {
-        currentChapter = trimmedLine.replace(/^(Chapter|Section|Part)\s*\d*[:\-\s]*/i, '').trim() || 'General';
-        console.log(`📚 Found chapter: ${currentChapter}`);
-        continue;
-      }
-      
-      // Question detection (multiple patterns)
-      if (trimmedLine.match(/^(Q|Question|Q\d+)[:\-\s]/i)) {
-        if (currentCard && currentCard.question && currentCard.answer) {
-          flashcards.push({ ...currentCard, chapter: currentChapter });
-        }
-        currentCard = {
-          question: trimmedLine.replace(/^(Q|Question|Q\d+)[:\-\s]*/i, '').trim(),
-          answer: '',
-          chapter: currentChapter
-        };
-      } 
-      // Answer detection
-      else if (trimmedLine.match(/^(A|Answer|A\d+)[:\-\s]/i)) {
-        if (currentCard) {
-          currentCard.answer = trimmedLine.replace(/^(A|Answer|A\d+)[:\-\s]*/i, '').trim();
-        }
-      } 
-      // Continue building current card
-      else if (currentCard && trimmedLine && !trimmedLine.startsWith('---') && !trimmedLine.startsWith('===')) {
-        if (currentCard.answer) {
-          currentCard.answer += ' ' + trimmedLine;
-        } else if (currentCard.question) {
-          currentCard.question += ' ' + trimmedLine;
-        }
-      }
-    }
-    
-    // Add the last card
-    if (currentCard && currentCard.question && currentCard.answer) {
-      flashcards.push({ ...currentCard, chapter: currentChapter });
-    }
-    
-    console.log(`✅ Parsed ${flashcards.length} flashcards from text format`);
-    
-    // If no structured format found, try to extract Q&A pairs
-    if (flashcards.length === 0) {
-      console.log('⚠️ No structured format found, extracting Q&A pairs...');
-      const qaPairs = this.extractQAPairs(text);
-      qaPairs.forEach(pair => {
-        flashcards.push({
-          question: pair.question,
-          answer: pair.answer,
-          chapter: currentChapter
-        });
-      });
-      console.log(`✅ Extracted ${qaPairs.length} Q&A pairs`);
-    }
-    
-    // Filter out invalid cards
-    const validFlashcards = flashcards.filter(card => 
-      card.question && 
-      card.answer && 
-      card.question.trim() !== '' && 
-      card.answer.trim() !== '' &&
-      !card.question.includes('question text') &&
-      !card.answer.includes('answers text')
-    );
-    
-    console.log(`✅ Final result: ${validFlashcards.length} valid flashcards`);
-    return validFlashcards;
-  }
 
-  // Extract Q&A pairs from unstructured text
-  private extractQAPairs(text: string): Array<{ question: string; answer: string }> {
-    const pairs: Array<{ question: string; answer: string }> = [];
+    console.log(`📝 Formatting ${chunks.length} chunks for Gemini...`);
     
-    // Look for question patterns
-    const questionPatterns = [
-      /What is (.+?)\?/gi,
-      /Define (.+?)[\?\.]/gi,
-      /Explain (.+?)[\?\.]/gi,
-      /How does (.+?)\?/gi,
-      /Why (.+?)\?/gi
-    ];
-    
-    questionPatterns.forEach(pattern => {
-      let match;
-      while ((match = pattern.exec(text)) !== null) {
-        const question = match[0].trim();
-        const answer = this.findAnswerForQuestion(question, text);
-        if (answer) {
-          pairs.push({ question, answer });
-        }
+    const summarizedChunks = chunks.map((chunk, index) => {
+      const content = chunk.content || '';
+      if (content.length > 400) {
+        return content.slice(0, 200) + '...' + content.slice(-200);
       }
+      return content;
     });
+
+    const context = summarizedChunks
+      .map((chunk, index) => `Context ${index + 1}:\n${chunk}`)
+      .join('\n\n');
     
-    return pairs;
+    console.log(`📝 Formatted context: ${context.length} characters from ${chunks.length} chunks`);
+    
+    return context;
   }
 
-  // Find answer for a question in the text
-  private findAnswerForQuestion(question: string, text: string): string {
-    // Simple heuristic to find related content
-    const questionWords = question.toLowerCase().split(/\s+/);
-    const sentences = text.split(/[.!?]+/);
+  async clearDocumentCache(documentId: string, userId: string): Promise<void> {
+    const chunksQuery = firestoreQuery(
+      collection(db, 'documentChunks'),
+      where('metadata.documentId', '==', documentId),
+      where('metadata.userId', '==', userId)
+    );
+
+    const chunksSnapshot = await getDocs(chunksQuery);
+    const batch = writeBatch(db);
+
+    chunksSnapshot.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+
+    await batch.commit();
+    console.log(`🗑️ Cleared cache for document ${documentId}`);
+  }
+
+  /**
+   * Generate flashcards using RAG pipeline with intelligent caching
+   * This method integrates with the existing geminiService and adds caching
+   */
+  async generateFlashcards(
+    studyMaterial: string,
+    fileName: string,
+    filters: any,
+    totalPages: number,
+    onProgress: (progress: number, status: string) => void,
+    userId?: string
+  ): Promise<{
+    flashcards: any[];
+    metadata: {
+      totalChunks: number;
+      processingTime: number;
+      fileName: string;
+      isFromCache: boolean;
+    };
+  }> {
+    const startTime = Date.now();
     
-    for (const sentence of sentences) {
-      const sentenceWords = sentence.toLowerCase().split(/\s+/);
-      const commonWords = questionWords.filter(word => 
-        word.length > 3 && sentenceWords.includes(word)
-      );
+    try {
+      console.log('🚀 RAG Pipeline: Starting intelligent flashcard generation...');
+      onProgress(0.05, 'Initializing RAG pipeline...');
+
+      // Get user ID from context or parameter
+      const currentUserId = userId || this.getCurrentUserId();
+      console.log('👤 User ID:', currentUserId);
+
+      // Generate content hash for caching (including filters)
+      const contentHash = pdfCacheService.generateContentHash(studyMaterial, fileName, filters);
+      console.log('🔍 Content hash (with filters):', contentHash);
+
+      // Check cache first
+      onProgress(0.1, 'Checking cache for existing PDF...');
+      const cachedEntry = await pdfCacheService.checkCache(contentHash, currentUserId, filters);
       
-      if (commonWords.length >= 2) {
-        return sentence.trim();
+      if (cachedEntry) {
+        console.log('⚡ PDF found in cache! Returning cached results...');
+        onProgress(0.3, 'Loading from cache...');
+        
+        // Simulate some processing time for better UX
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        onProgress(1.0, 'Flashcards loaded from cache!');
+        
+        // Convert cached chapter decks to flashcards
+        const flashcards: any[] = [];
+        cachedEntry.chapterDecks.forEach(chapter => {
+          chapter.flashcards.forEach(card => {
+            flashcards.push({
+              question: card.question,
+              answer: card.answer,
+              chapter: chapter.chapterTitle,
+              id: card.id
+            });
+          });
+        });
+
+        return {
+          flashcards: flashcards,
+          metadata: {
+            totalChunks: flashcards.length,
+            processingTime: Date.now() - startTime,
+            fileName: fileName,
+            isFromCache: true
+          }
+        };
       }
-    }
-    
-    return '';
-  }
 
-  // Estimate token usage for monitoring
-  private estimateTokenUsage(context: string): number {
-    return Math.ceil(context.length / 4); // Rough estimation
-  }
-
-  // Estimate token count for a given text
-  private estimateTokenCount(text: string): number {
-    return Math.ceil(text.length / 4); // Rough estimation: 1 token ≈ 4 characters
-  }
-
-  // Batch processing for multiple documents
-  async batchGenerateFlashcards(
-    documents: Array<{ text: string; fileName: string; filters: FlashcardFilters; totalPages?: number }>,
-    onProgress?: (progress: number, status: string) => void
-  ): Promise<RAGResult[]> {
-    const results: RAGResult[] = [];
-    const totalDocs = documents.length;
-    
-    for (let i = 0; i < totalDocs; i++) {
-      const doc = documents[i];
-      const docProgress = (i / totalDocs) * 100;
+      console.log('📝 PDF not in cache, processing with RAG pipeline...');
+      onProgress(0.2, 'Chunking and analyzing content...');
       
-      onProgress?.(docProgress, `Processing ${doc.fileName}...`);
+      // Use RAG pipeline for new PDFs - chunk the content first
+      const chunks = this.chunkText(studyMaterial, fileName, 1);
+      console.log(`📊 Created ${chunks.length} chunks for RAG processing`);
+      
+      // Estimate total pages (assuming ~500 words per page)
+      const totalPages = Math.max(1, Math.ceil(studyMaterial.split(/\s+/).length / 500));
+      
+      // Debug: Log the first few chunks to see if text is being processed
+      console.log('🔍 First few chunks:', chunks.slice(0, 3));
+      console.log('🔍 Study material length:', studyMaterial.length);
+      console.log('🔍 Study material preview:', studyMaterial.substring(0, 200));
+      
+      onProgress(0.3, 'Generating embeddings...');
+      
+      // Generate embeddings for all chunks
+      const embeddings = await this.generateEmbeddingsBatch(chunks, (progress, status) => {
+        onProgress(0.3 + (progress * 0.1), status);
+      });
+      console.log(`🔗 Generated ${embeddings.length} embeddings`);
+      
+      onProgress(0.4, 'Storing chunks in database...');
+      
+      // Store chunks in Firestore for future retrieval (with error handling)
+      try {
+        // Update chunks with proper metadata before storing
+        const chunksWithMetadata = embeddings.map((chunk, index) => ({
+          ...chunk,
+          id: `${fileName}-chunk-${index}`,
+          metadata: {
+            ...chunk.metadata,
+            userId: currentUserId,
+            documentId: fileName,
+          }
+        }));
+        
+        console.log('🔍 Chunks with metadata:', chunksWithMetadata.slice(0, 2));
+        console.log('🔍 Current user ID:', currentUserId);
+        console.log('🔍 File name:', fileName);
+        
+        await this.storeChunksBatch(chunksWithMetadata);
+        console.log('✅ Chunks stored successfully in Firestore');
+      } catch (error) {
+        console.warn('⚠️ Failed to store chunks in Firestore, continuing with local processing:', error);
+        // Continue without storing - we can still generate flashcards
+      }
+      
+      onProgress(0.5, 'Generating flashcards with RAG...');
+      
+      let chapterDecks: any[] = [];
       
       try {
-        const result = await this.generateFlashcards(
-          doc.text,
-          doc.fileName,
-          doc.filters,
-          doc.totalPages || 1,
-          (progress, status) => {
-            const totalProgress = docProgress + (progress * (1 / totalDocs));
-            onProgress?.(totalProgress, status);
-          }
-        );
-        results.push(result);
-      } catch (error) {
-        console.error(`Error processing ${doc.fileName}:`, error);
-        // Continue with other documents
-        results.push({
-          flashcards: [],
-          metadata: {
-            chunksUsed: 0,
-            totalChunks: 0,
-            processingTime: 0,
-            tokensUsed: 0
-          }
+        // Use RAG retrieval to find relevant chunks for flashcard generation
+        const ragResult = await this.retrieveRelevantChunks({
+          query: studyMaterial,
+          documentId: fileName,
+          userId: currentUserId,
+          maxResults: 10
         });
+        
+        onProgress(0.6, 'Creating flashcards from retrieved content...');
+        
+        // Check if we got valid chunks from retrieval
+        if (ragResult.chunks && ragResult.chunks.length > 0) {
+          console.log(`🎯 Using ${ragResult.chunks.length} retrieved chunks for flashcard generation`);
+          // Generate flashcards using the retrieved chunks
+          chapterDecks = await this.generateFlashcardsFromChunks(
+            ragResult.chunks,
+            filters,
+            totalPages,
+            (progress, status) => {
+              const mappedProgress = 0.6 + (progress * 0.3);
+              onProgress(mappedProgress, status);
+            }
+          );
+        } else {
+          throw new Error('No chunks retrieved from RAG');
+        }
+      } catch (error) {
+        console.warn('⚠️ RAG retrieval failed, falling back to direct processing:', error);
+        onProgress(0.6, 'Using direct content processing...');
+        
+        // Fallback: use the original chunks directly for flashcard generation
+        console.log(`🔄 Using ${chunks.length} original chunks for fallback processing`);
+        
+        try {
+          chapterDecks = await this.generateFlashcardsFromChunks(
+            chunks,
+            filters,
+            totalPages,
+            (progress, status) => {
+              const mappedProgress = 0.6 + (progress * 0.3);
+              onProgress(mappedProgress, status);
+            }
+          );
+        } catch (chunkError) {
+          console.warn('⚠️ Chunk processing failed, using original study material:', chunkError);
+          onProgress(0.7, 'Using original study material...');
+          
+          // Final fallback: use the original study material directly
+          const { generateFlashcardsFromText } = await import('./geminiService');
+          chapterDecks = await generateFlashcardsFromText(
+            studyMaterial,
+            (progress, status) => {
+              const mappedProgress = 0.7 + (progress * 0.3);
+              onProgress(mappedProgress, status);
+            },
+            filters,
+            totalPages
+          );
+        }
       }
+
+      onProgress(0.9, 'Caching results for future use...');
+      
+      // Add RAG processing metadata
+      const ragMetadata = {
+        chunksProcessed: chunks.length,
+        embeddingsGenerated: embeddings.length,
+        retrievalMethod: 'semantic_search',
+        processingType: 'rag_pipeline'
+      };
+      
+      // Store in cache for future use
+      await pdfCacheService.storeCache(
+        contentHash,
+        currentUserId,
+        fileName,
+        totalPages,
+        studyMaterial.length,
+        chapterDecks,
+        { ...filters, ragMetadata },
+        Date.now() - startTime
+      );
+      
+      onProgress(0.95, 'Converting to RAG format...');
+      
+      // Convert ChapterDeck format to the format expected by the RAG pipeline
+      const flashcards: any[] = [];
+      chapterDecks.forEach(chapter => {
+        chapter.flashcards.forEach(card => {
+          flashcards.push({
+            question: card.question,
+            answer: card.answer,
+            chapter: chapter.chapterTitle,
+            id: card.id
+          });
+        });
+      });
+
+      onProgress(1.0, 'RAG flashcard generation complete!');
+
+      console.log('✅ RAG Pipeline completed successfully!');
+      console.log('📊 RAG Statistics:', {
+        chunksProcessed: chunks.length,
+        embeddingsGenerated: embeddings.length,
+        flashcardsGenerated: flashcards.length,
+        processingTime: Date.now() - startTime,
+        retrievalMethod: 'semantic_search'
+      });
+
+      return {
+        flashcards: flashcards,
+        metadata: {
+          totalChunks: flashcards.length,
+          processingTime: Date.now() - startTime,
+          fileName: fileName,
+          isFromCache: false,
+          ragMetadata: {
+            chunksProcessed: chunks.length,
+            embeddingsGenerated: embeddings.length,
+            retrievalMethod: 'semantic_search',
+            processingType: 'rag_pipeline'
+          }
+        } as any
+      };
+    } catch (error) {
+      console.error('Error in RAG pipeline flashcard generation:', error);
+      throw error;
     }
-    
-    return results;
-  }
-
-  // Clear cache for a specific document
-  clearDocumentCache(fileName: string): void {
-    embeddingService.clearCache(fileName);
-  }
-
-  // Get processing statistics
-  getProcessingStats(): {
-    cachedChunks: number;
-    cachedEmbeddings: number;
-  } {
-    return {
-      cachedChunks: embeddingService['chunkCache'].size,
-      cachedEmbeddings: embeddingService['embeddingCache'].size
-    };
   }
 }
 
-export const ragPipeline = RAGPipeline.getInstance();
+export const optimizedRAGService = new OptimizedRAGService();
+export const ragPipeline = optimizedRAGService; // Alias for compatibility

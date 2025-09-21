@@ -1,8 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect } from 'react';
 import { XIcon, CheckIcon } from './icons/AppIcons';
 import { FlashcardFilters, STUDY_GOALS, CONTENT_TYPES, DEPTH_OPTIONS, ORGANIZATION_OPTIONS } from '../types/filters';
-import { subscriptionService } from '../services/subscriptionService';
-import UpgradeModal from './UpgradeModal';
 
 interface FilterPanelProps {
   isOpen: boolean;
@@ -19,17 +17,27 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
   onFiltersChange, 
   totalPages = 0 
 }) => {
-  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
-  const currentTier = subscriptionService.getCurrentTier();
-  const hasSmartFilters = subscriptionService.hasFeature('hasSmartFilters');
+  
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'auto';
+    }
+    return () => { 
+      document.body.style.overflow = 'auto'; 
+    };
+  }, [isOpen]);
   
   if (!isOpen) return null;
 
   const handleStudyGoalChange = (value: FlashcardFilters['studyGoal']) => {
+    console.log('🎯 Study Goal changed to:', value);
     onFiltersChange({ ...filters, studyGoal: value });
   };
 
   const handleContentTypeChange = (value: FlashcardFilters['contentType'][0], checked: boolean) => {
+    console.log('🎯 Content Type changed:', value, 'checked:', checked);
     if (checked) {
       onFiltersChange({ 
         ...filters, 
@@ -44,10 +52,12 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
   };
 
   const handleDepthChange = (value: FlashcardFilters['depth']) => {
+    console.log('🎯 Depth changed to:', value);
     onFiltersChange({ ...filters, depth: value });
   };
 
   const handleOrganizationChange = (value: FlashcardFilters['organization']) => {
+    console.log('🎯 Organization changed to:', value);
     onFiltersChange({ ...filters, organization: value });
   };
 
@@ -68,9 +78,9 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
   return (
     <>
       <div className="fixed inset-0 bg-black/60 z-40" onClick={onClose} />
-      <div className="fixed right-0 top-0 h-full w-full max-w-md bg-white dark:bg-brand-dark shadow-2xl z-50 transform transition-transform duration-300 ease-in-out">
+      <div className="fixed right-0 top-0 h-screen w-full max-w-md bg-white dark:bg-brand-dark shadow-2xl z-50 transform transition-transform duration-300 ease-in-out flex flex-col">
         {/* Header */}
-        <div className="bg-gradient-to-r from-brand-primary to-teal-600 p-6 text-white">
+        <div className="bg-gradient-to-r from-brand-primary to-teal-600 p-6 text-white flex-shrink-0">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-xl font-bold">Smart Filters</h2>
@@ -86,7 +96,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
         </div>
 
         {/* Content */}
-        <div className="p-6 space-y-6 overflow-y-auto h-full pb-20">
+        <div className="p-6 space-y-6 overflow-y-auto flex-1 pb-24">
           {/* Study Goal */}
           <FilterSection title="Study Goal" description="Choose your learning objective">
             {STUDY_GOALS.map(option => (
@@ -105,8 +115,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
           <FilterSection 
             title="Content Type" 
             description="Select what to focus on"
-            isPremium={!hasSmartFilters}
-            onUpgrade={() => setShowUpgradeModal(true)}
           >
             {CONTENT_TYPES.map(option => (
               <ModernCheckboxOption
@@ -116,7 +124,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
                 description={option.description}
                 checked={filters.contentType.includes(option.value)}
                 onChange={(checked) => handleContentTypeChange(option.value, checked)}
-                disabled={!hasSmartFilters}
               />
             ))}
           </FilterSection>
@@ -125,8 +132,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
           <FilterSection 
             title="Depth of Cards" 
             description="Choose detail level"
-            isPremium={!hasSmartFilters}
-            onUpgrade={() => setShowUpgradeModal(true)}
           >
             {DEPTH_OPTIONS.map(option => (
               <ModernRadioOption
@@ -136,7 +141,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
                 description={option.description}
                 checked={filters.depth === option.value}
                 onChange={() => handleDepthChange(option.value)}
-                disabled={!hasSmartFilters}
               />
             ))}
           </FilterSection>
@@ -145,8 +149,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
           <FilterSection 
             title="Organization" 
             description="How to structure cards"
-            isPremium={!hasSmartFilters}
-            onUpgrade={() => setShowUpgradeModal(true)}
           >
             {ORGANIZATION_OPTIONS.map(option => (
               <ModernRadioOption
@@ -156,7 +158,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
                 description={option.description}
                 checked={filters.organization === option.value}
                 onChange={() => handleOrganizationChange(option.value)}
-                disabled={!hasSmartFilters}
               />
             ))}
           </FilterSection>
@@ -165,8 +166,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
           <FilterSection 
             title="Smart Controls" 
             description="Fine-tune generation"
-            isPremium={!hasSmartFilters}
-            onUpgrade={() => setShowUpgradeModal(true)}
           >
             <div className="space-y-4">
               {/* Cards per Chapter */}
@@ -180,7 +179,6 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
                   max="20"
                   value={filters.limitPerChapter}
                   onChange={(e) => handleLimitPerChapterChange(parseInt(e.target.value))}
-                  disabled={!hasSmartFilters}
                   className="w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer slider"
                 />
                 <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -201,8 +199,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
                     max={totalPages}
                     value={filters.pageRange?.start || 1}
                     onChange={(e) => handlePageRangeChange('start', parseInt(e.target.value))}
-                    disabled={!hasSmartFilters}
-                    className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-brand-primary focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-brand-primary focus:border-transparent"
                     placeholder="Start"
                   />
                   <span className="flex items-center text-slate-500 dark:text-slate-400">to</span>
@@ -212,8 +209,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
                     max={totalPages}
                     value={filters.pageRange?.end || totalPages}
                     onChange={(e) => handlePageRangeChange('end', parseInt(e.target.value))}
-                    disabled={!hasSmartFilters}
-                    className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-brand-primary focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex-1 px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:ring-2 focus:ring-brand-primary focus:border-transparent"
                     placeholder="End"
                   />
                 </div>
@@ -221,42 +217,32 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
             </div>
           </FilterSection>
         </div>
+
+        {/* Apply Button */}
+        <div className="flex-shrink-0 p-6 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-brand-dark">
+          <button
+            onClick={onClose}
+            className="w-full bg-gradient-to-r from-brand-primary to-teal-600 text-white font-semibold py-3 px-6 rounded-lg hover:from-brand-primary/90 hover:to-teal-600/90 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-[1.02] active:scale-[0.98]"
+          >
+            Apply Filters
+          </button>
+        </div>
       </div>
 
-      {/* Upgrade Modal */}
-      <UpgradeModal
-        isOpen={showUpgradeModal}
-        onClose={() => setShowUpgradeModal(false)}
-        currentTier={currentTier}
-        targetTier="pro"
-        reason="Smart Filters are available in Pro tier and above"
-      />
     </>
   );
 };
 
-// Filter Section Component with Premium Support
+// Filter Section Component
 const FilterSection: React.FC<{
   title: string;
   description: string;
   children: React.ReactNode;
-  isPremium?: boolean;
-  onUpgrade?: () => void;
-}> = ({ title, description, children, isPremium = false, onUpgrade }) => (
+}> = ({ title, description, children }) => (
   <div className="space-y-3">
-    <div className="flex items-center justify-between">
-      <div>
-        <h3 className="font-semibold text-slate-800 dark:text-slate-200">{title}</h3>
-        <p className="text-sm text-slate-500 dark:text-slate-400">{description}</p>
-      </div>
-      {isPremium && (
-        <button
-          onClick={onUpgrade}
-          className="text-xs bg-gradient-to-r from-brand-primary to-teal-600 text-white px-2 py-1 rounded-full hover:from-teal-600 hover:to-brand-primary transition-all"
-        >
-          Pro
-        </button>
-      )}
+    <div>
+      <h3 className="font-semibold text-slate-800 dark:text-slate-200">{title}</h3>
+      <p className="text-sm text-slate-500 dark:text-slate-400">{description}</p>
     </div>
     <div className="space-y-2">
       {children}
@@ -273,7 +259,9 @@ const ModernRadioOption: React.FC<{
   onChange: () => void;
   disabled?: boolean;
 }> = ({ value, label, description, checked, onChange, disabled = false }) => (
-  <label className={`group flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all duration-200 ${
+  <label 
+    onClick={() => !disabled && onChange()}
+    className={`group flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all duration-200 ${
     checked 
       ? 'border-brand-primary bg-brand-primary/5' 
       : 'border-slate-200 dark:border-slate-600 hover:border-slate-300 dark:hover:border-slate-500'
@@ -313,7 +301,9 @@ const ModernCheckboxOption: React.FC<{
   onChange: (checked: boolean) => void;
   disabled?: boolean;
 }> = ({ value, label, description, checked, onChange, disabled = false }) => (
-  <label className={`group flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all duration-200 ${
+  <label 
+    onClick={() => !disabled && onChange(!checked)}
+    className={`group flex items-start gap-3 p-3 rounded-lg border-2 cursor-pointer transition-all duration-200 ${
     checked 
       ? 'border-brand-primary bg-brand-primary/5' 
       : 'border-slate-200 dark:border-slate-600 hover:border-slate-300 dark:hover:border-slate-500'

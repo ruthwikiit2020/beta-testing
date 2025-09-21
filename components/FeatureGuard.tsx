@@ -60,7 +60,12 @@ const FeatureGuard: React.FC<FeatureGuardProps> = ({
 
 // Helper function to check tier access
 const checkTierAccess = (currentTier: PricingTier, requiredTier: PricingTier): boolean => {
-  const tierOrder: PricingTier[] = ['free', 'pro', 'flash', 'institution'];
+  // Owner always has access to everything
+  if (currentTier === 'owner') {
+    return true;
+  }
+  
+  const tierOrder: PricingTier[] = ['free', 'pro', 'flash', 'institution', 'owner'];
   const currentIndex = tierOrder.indexOf(currentTier);
   const requiredIndex = tierOrder.indexOf(requiredTier);
   

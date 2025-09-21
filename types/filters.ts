@@ -1,6 +1,6 @@
 export interface FlashcardFilters {
   studyGoal: 'exam-revision' | 'concept-mastery' | 'quick-review';
-  contentType: ('formulas' | 'definitions' | 'diagrams' | 'full-detail')[];
+  contentType: ('formulas' | 'definitions' | 'full-detail')[];
   depth: 'short' | 'moderate' | 'in-depth';
   organization: 'chapter-wise' | 'topic-clusters' | 'custom-tags';
   limitPerChapter: number;
@@ -36,7 +36,6 @@ export const STUDY_GOALS = [
 export const CONTENT_TYPES = [
   { value: 'formulas', label: 'Formulas & Equations', description: 'Mathematical formulas and equations' },
   { value: 'definitions', label: 'Definitions & Key Terms', description: 'Important terms and definitions' },
-  { value: 'diagrams', label: 'Diagrams & Figures', description: 'Visual elements and diagrams' },
   { value: 'full-detail', label: 'Full Detail', description: 'Comprehensive content coverage' },
 ] as const;
 

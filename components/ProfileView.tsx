@@ -78,8 +78,8 @@ const ProfileView: React.FC<ProfileViewProps> = ({ user, progressData, cardsStud
             />
             <div className="flex items-center gap-2 mb-1">
               <h1 className="text-lg font-bold">{user?.name}</h1>
-              <span className="px-2 py-1 text-xs font-semibold bg-gradient-to-r from-brand-primary to-teal-600 text-white rounded-full">
-                {subscriptionService.getCurrentTier().toUpperCase()}
+              <span className="px-2 py-1 text-xs font-semibold rounded-full bg-gradient-to-r from-brand-primary to-teal-600 text-white">
+                {subscriptionService.getCurrentTier() === 'owner' ? 'PRO' : subscriptionService.getCurrentTier().toUpperCase()}
               </span>
             </div>
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">{user?.email}</p>
@@ -97,7 +97,7 @@ const ProfileView: React.FC<ProfileViewProps> = ({ user, progressData, cardsStud
                 <ProfileLink label="Help & Support" description="Get help and feedback" onClick={() => onOpenModal('help')} Icon={QuestionMarkCircleIcon}/>
                 
                 {/* Quick Upgrade Button */}
-                {subscriptionService.getCurrentTier() !== 'institution' && (
+                {subscriptionService.getCurrentTier() !== 'institution' && subscriptionService.getCurrentTier() !== 'owner' && (
                   <button
                     onClick={() => onOpenModal('settings')}
                     className="w-full bg-gradient-to-r from-brand-primary to-teal-600 hover:from-teal-600 hover:to-brand-primary text-white font-semibold py-3 px-4 rounded-lg transition-all shadow-lg hover:shadow-xl transform hover:scale-105"

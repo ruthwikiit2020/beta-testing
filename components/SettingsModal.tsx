@@ -1,18 +1,26 @@
 import React, { useEffect, useState } from 'react';
 import { XIcon, CheckIcon, ArrowRightIcon } from './icons/AppIcons';
 import { subscriptionService } from '../services/subscriptionService';
+import { notificationService } from '../services/notificationService';
 import { PRICING_TIERS } from '../types/pricing';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
+  theme: 'light' | 'dark';
+  onThemeChange: (theme: 'light' | 'dark') => void;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, theme, onThemeChange }) => {
   const [activeTab, setActiveTab] = useState<'general' | 'subscription'>('general');
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    return document.documentElement.classList.contains('dark');
+  const isDarkMode = theme === 'dark';
+  const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+    return notificationService.getSettings().isEnabled;
   });
+  const [notificationTime, setNotificationTime] = useState(() => {
+    return notificationService.getSettings().dailyNotificationTime;
+  });
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
   const currentTier = subscriptionService.getCurrentTier();
   const subscription = subscriptionService.getSubscription();
 
@@ -21,6 +29,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     else document.body.style.overflow = 'auto';
     return () => { document.body.style.overflow = 'auto'; };
   }, [isOpen]);
+
+  useEffect(() => {
+    // Check notification permission
+    if ('Notification' in window) {
+      setNotificationPermission(Notification.permission);
+    }
+  }, []);
 
   if (!isOpen) return null;
 
@@ -33,15 +48,34 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   };
 
   const toggleTheme = () => {
-    const newDarkMode = !isDarkMode;
-    setIsDarkMode(newDarkMode);
-    
-    if (newDarkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
+    const newTheme = isDarkMode ? 'light' : 'dark';
+    onThemeChange(newTheme);
+  };
+
+  const toggleNotifications = async () => {
+    if (notificationsEnabled) {
+      notificationService.disableNotifications();
+      setNotificationsEnabled(false);
     } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
+      const success = await notificationService.enableNotifications();
+      if (success) {
+        setNotificationsEnabled(true);
+        setNotificationPermission(Notification.permission);
+      } else {
+        alert('Unable to enable notifications. Please check your browser settings and allow notifications for this site.');
+      }
+    }
+  };
+
+  const handleNotificationTimeChange = (time: string) => {
+    setNotificationTime(time);
+    notificationService.setDailyNotificationTime(time);
+  };
+
+  const testNotification = async () => {
+    const success = await notificationService.testNotification();
+    if (!success) {
+      alert('Unable to send test notification. Please check your browser settings.');
     }
   };
 
@@ -130,17 +164,70 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
 
               <SettingItem
                 title="Notifications"
-                description="Manage your notification preferences"
+                description="Get daily study reminders"
                 icon={<span>🔔</span>}
                 rightElement={
                   <div className="flex items-center gap-2">
-                    <span className="text-sm text-slate-500">On</span>
-                    <div className="w-12 h-6 bg-brand-primary rounded-full relative">
-                      <div className="w-5 h-5 bg-white rounded-full absolute top-0.5 right-0.5 transition-transform"></div>
+                    <span className="text-sm text-slate-500">Off</span>
+                    <div 
+                      className={`w-12 h-6 rounded-full relative transition-colors cursor-pointer ${
+                        notificationsEnabled ? 'bg-brand-primary' : 'bg-slate-200 dark:bg-slate-700'
+                      }`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        toggleNotifications();
+                      }}
+                    >
+                      <div className={`w-5 h-5 bg-white rounded-full absolute top-0.5 transition-transform ${
+                        notificationsEnabled ? 'right-0.5' : 'left-0.5'
+                      }`}></div>
                     </div>
+                    <span className="text-sm text-slate-500">On</span>
                   </div>
                 }
               />
+
+              {/* Notification Time Setting - Only show if notifications are enabled */}
+              {notificationsEnabled && (
+                <div className="flex items-center gap-4 p-4 rounded-lg border border-slate-200 dark:border-slate-700">
+                  <div className="w-10 h-10 rounded-lg bg-brand-primary/10 flex items-center justify-center text-brand-primary">
+                    <span>⏰</span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-slate-800 dark:text-slate-200">Daily Reminder Time</h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">Choose when to receive your daily study reminder</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="time"
+                      value={notificationTime}
+                      onChange={(e) => handleNotificationTimeChange(e.target.value)}
+                      className="px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-brand-primary focus:border-transparent"
+                    />
+                    <button
+                      onClick={testNotification}
+                      className="px-3 py-2 text-sm bg-brand-primary text-white rounded-lg hover:bg-teal-600 transition-colors"
+                    >
+                      Test
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Notification Permission Status */}
+              {notificationPermission === 'denied' && (
+                <div className="p-4 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800">
+                  <div className="flex items-start gap-3">
+                    <span className="text-red-500 text-lg">⚠️</span>
+                    <div>
+                      <h5 className="font-semibold text-red-800 dark:text-red-200">Notifications Blocked</h5>
+                      <p className="text-sm text-red-600 dark:text-red-300 mt-1">
+                        Notifications are blocked by your browser. Please enable them in your browser settings to receive daily reminders.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <SettingItem
                 title="Data & Privacy"

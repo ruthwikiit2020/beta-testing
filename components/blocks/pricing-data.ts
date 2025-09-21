@@ -12,7 +12,7 @@ export const TIERS: PricingTier[] = [
     },
     description: "Forever free, with daily limits",
     features: [
-      "4 PDF uploads/day (max 20 pages each)",
+      "10 PDF uploads/day (max 20 pages each)",
       "100 flashcards/month",
       "Revision Hub: 15 cards saved",
       "Basic spaced repetition",
@@ -29,7 +29,7 @@ export const TIERS: PricingTier[] = [
     },
     description: "Most Popular – Perfect for students",
     features: [
-      "10 PDF uploads/day (max 80 pages each)",
+      "40 PDF uploads/day (max 80 pages each)",
       "1,000 flashcards/month",
       "Unlimited Revision Hub storage",
       "Smart filters (Formulas, Key Concepts, Summaries)",

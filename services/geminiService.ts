@@ -103,7 +103,9 @@ export async function generateFlashcardsWithRAG(
     console.log('🚀 Starting RAG-based flashcard generation...');
     console.log('📄 File:', fileName);
     console.log('📝 Text length:', studyMaterial.length);
+    console.log('📝 Text preview:', studyMaterial.substring(0, 300));
     console.log('🔧 Filters:', filters);
+    console.log('📊 Total pages:', totalPages);
     
     // Use RAG pipeline for optimized generation
     const ragResult = await ragPipeline.generateFlashcards(
@@ -116,6 +118,16 @@ export async function generateFlashcardsWithRAG(
     
     console.log('✅ RAG Pipeline completed:', ragResult.metadata);
     console.log('📊 Generated flashcards:', ragResult.flashcards.length);
+    
+    // Log cache status and RAG processing info
+    if (ragResult.metadata.isFromCache) {
+      console.log('⚡ Results loaded from cache - instant response!');
+    } else {
+      console.log('🔄 Results generated with RAG pipeline and cached for future use');
+      if ((ragResult.metadata as any).ragMetadata) {
+        console.log('🧠 RAG Processing Details:', (ragResult.metadata as any).ragMetadata);
+      }
+    }
     
     // Convert the result to ChapterDeck format
     // The RAG pipeline returns flashcards, we need to organize them by chapter
@@ -138,13 +150,17 @@ export async function generateFlashcardsWithRAG(
         chapterDecks.push({
           chapterTitle: chapterName,
           flashcards: cards.map((card, index) => ({
-            id: `card_${Date.now()}_${index}`,
+            id: card.id || `card_${Date.now()}_${index}`,
             question: card.question || card.front || card.term || 'Question',
             answer: card.answer || card.back || card.definition || 'Answer'
           }))
         });
       });
     }
+
+    // Add cache status to the result
+    (chapterDecks as any).isFromCache = ragResult.metadata.isFromCache;
+    (chapterDecks as any).processingTime = ragResult.metadata.processingTime;
     
     // If no chapters found, create a single chapter
     if (chapterDecks.length === 0) {
@@ -205,6 +221,14 @@ export async function generateFlashcardsFromText(
     console.log('Study material preview:', studyMaterial.substring(0, 200) + '...');
     
     onProgress(0.1, 'Crafting expert prompt...');
+    console.log('🎯 Applying filters:', {
+      studyGoal: filters.studyGoal,
+      contentType: filters.contentType,
+      depth: filters.depth,
+      organization: filters.organization,
+      limitPerChapter: filters.limitPerChapter,
+      pageRange: filters.pageRange
+    });
     const prompt = buildFilteredPrompt(studyMaterial, filters, totalPages);
     
     onProgress(0.25, 'Sending request to Gemini...');

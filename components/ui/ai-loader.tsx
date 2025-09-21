@@ -9,7 +9,7 @@ export const Component: React.FC<LoaderProps> = ({ size = 180, text = "Generatin
   const letters = text.split("");
 
   return (
-    <div className="flex items-center justify-center bg-gradient-to-b from-[#1a3379] via-[#0f172a] to-black dark:from-gray-100 dark:via-gray-200 dark:to-gray-300 rounded-xl p-8">
+    <div className="flex items-center justify-center">
       <div
         className="relative flex items-center justify-center font-inter select-none"
         style={{ width: size, height: size }}
@@ -18,7 +18,7 @@ export const Component: React.FC<LoaderProps> = ({ size = 180, text = "Generatin
         {letters.map((letter, index) => (
           <span
             key={index}
-            className="inline-block text-white dark:text-gray-800 opacity-40 animate-loaderLetter"
+            className="inline-block text-slate-700 dark:text-slate-200 opacity-40 animate-loaderLetter"
             style={{ animationDelay: `${index * 0.1}s` }}
           >
             {letter}

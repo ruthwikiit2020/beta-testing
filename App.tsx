@@ -48,6 +48,7 @@ function App() {
 
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingStatus, setLoadingStatus] = useState('');
+  const [isFromCache, setIsFromCache] = useState(false);
   
   const [lastAction, setLastAction] = useState<{ card: Flashcard; type: 'known' | 'revise' } | null>(() => {
     const saved = localStorage.getItem('lastAction');
@@ -74,6 +75,14 @@ function App() {
         console.log('Setting current user:', userProfile);
         console.log('User photoURL:', user.photoURL);
         setCurrentUser(userProfile);
+        
+        // Store user info in localStorage for owner detection
+        if (user.email) {
+          localStorage.setItem('userEmail', user.email);
+        }
+        if (user.displayName) {
+          localStorage.setItem('userName', user.displayName);
+        }
 
         // Set a timeout to prevent infinite loading
         const timeoutId = setTimeout(() => {
@@ -218,6 +227,7 @@ function App() {
     setAppStatus('loading');
     setError(null);
     setLastAction(null);
+    setIsFromCache(false);
     
     try {
       // Check subscription limits before processing
@@ -241,6 +251,12 @@ function App() {
       console.log('Generated decks:', decks);
       
       if (decks && decks.length > 0) {
+        // Check if results are from cache
+        const isFromCache = (decks as any).isFromCache || false;
+        const processingTime = (decks as any).processingTime || 0;
+        
+        setIsFromCache(isFromCache);
+        
         // Record usage
         subscriptionService.recordUsage('uploadPdf');
         const totalCards = decks.reduce((sum, chapter) => sum + chapter.flashcards.length, 0);
@@ -258,7 +274,9 @@ function App() {
           deckId: newDeck.id,
           pdfName: newDeck.pdfName,
           chaptersCount: newDeck.flashcardDecks.length,
-          totalCards: totalCards
+          totalCards: totalCards,
+          isFromCache: isFromCache,
+          processingTime: processingTime
         });
         setUserData(prev => {
           const newUserData = prev ? { ...prev, decks: [...prev.decks, newDeck] } : { ...INITIAL_USER_DATA, decks: [newDeck] };
@@ -281,10 +299,20 @@ function App() {
   }, []);
 
   const activeDeck = userData?.decks.find(d => d.id === activeDeckId);
+  
   const [currentChapterIndex, setCurrentChapterIndex] = useState(() => {
     const saved = localStorage.getItem('currentChapterIndex');
     return saved ? parseInt(saved, 10) : 0;
   });
+  
+  // Debug logging
+  console.log('🔍 Debug - activeDeckId:', activeDeckId);
+  console.log('🔍 Debug - userData.decks:', userData?.decks);
+  console.log('🔍 Debug - activeDeck:', activeDeck);
+  if (activeDeck) {
+    console.log('🔍 Debug - activeDeck.flashcardDecks:', activeDeck.flashcardDecks);
+    console.log('🔍 Debug - currentChapterIndex:', currentChapterIndex);
+  }
 
   useEffect(() => {
     setLastAction(null);
@@ -611,7 +639,7 @@ function App() {
     }
     switch(activeView) {
       case 'myDecks':
-        return <MyDecksView decks={userData.decks || []} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} onResetDeck={handleResetDeck} onDeleteDeck={handleDeleteDeck} isLoading={appStatus === 'loading'} error={error} />;
+        return <MyDecksView decks={userData.decks || []} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} onResetDeck={handleResetDeck} onDeleteDeck={handleDeleteDeck} isLoading={appStatus === 'loading'} error={error} isFromCache={isFromCache} />;
       case 'achievements':
         const achievementsMasteredCount = userData.decks.reduce((sum, deck) => sum + deck.knownCards.length, 0);
         const achievementsSwipedCount = userData.decks.reduce((sum, deck) => sum + deck.knownCards.length + deck.reviseCards.length, 0);
@@ -624,7 +652,11 @@ function App() {
         />;
       case 'study':
         if (!activeDeck) return <div className="p-8 text-center text-slate-500 dark:text-slate-400"><h2 className="text-2xl font-semibold">No Deck Selected</h2><p className="mt-2">Please go to "My Decks" to choose a deck to study.</p></div>;
-        return <StudyView pdfName={activeDeck.pdfName} decks={activeDeck.flashcardDecks} currentDeck={activeDeck.flashcardDecks[currentChapterIndex]} currentDeckIndex={currentChapterIndex} onSelectChapter={(i) => { setCurrentChapterIndex(i); setLastAction(null); }} onSwipeLeft={handleSwipeLeft} onSwipeRight={handleSwipeRight} lastAction={lastAction} onUndo={handleUndo} />;
+        if (!activeDeck.flashcardDecks || activeDeck.flashcardDecks.length === 0) return <div className="p-8 text-center text-slate-500 dark:text-slate-400"><h2 className="text-2xl font-semibold">No Flashcards Available</h2><p className="mt-2">This deck doesn't have any flashcards to study.</p></div>;
+        const safeChapterIndex = Math.max(0, Math.min(currentChapterIndex, activeDeck.flashcardDecks.length - 1));
+        const currentDeck = activeDeck.flashcardDecks[safeChapterIndex];
+        if (!currentDeck) return <div className="p-8 text-center text-slate-500 dark:text-slate-400"><h2 className="text-2xl font-semibold">No Chapter Available</h2><p className="mt-2">This deck doesn't have any chapters to study.</p></div>;
+        return <StudyView pdfName={activeDeck.pdfName} decks={activeDeck.flashcardDecks} currentDeck={currentDeck} currentDeckIndex={safeChapterIndex} onSelectChapter={(i) => { setCurrentChapterIndex(i); setLastAction(null); }} onSwipeLeft={handleSwipeLeft} onSwipeRight={handleSwipeRight} lastAction={lastAction} onUndo={handleUndo} />;
       case 'revision':
         return <RevisionView reviseCards={activeDeck?.reviseCards || []} onStartChat={setSelectedCardForChat} onMarkAsKnown={handleMarkRevisedAsKnown} />;
       case 'progress':
@@ -640,7 +672,7 @@ function App() {
         const cardsStudied = userData ? userData.decks.reduce((sum, deck) => sum + deck.knownCards.length + deck.reviseCards.length, 0) : 0;
         return <ProfileView user={currentUser} progressData={userData.progress} cardsStudied={cardsStudied} setActiveView={setActiveView} onLogout={handleLogout} onOpenModal={openModal} />;
       default:
-        return <MyDecksView decks={userData.decks || []} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} onResetDeck={handleResetDeck} onDeleteDeck={handleDeleteDeck} isLoading={appStatus === 'loading'} error={error} />;
+        return <MyDecksView decks={userData.decks || []} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} onResetDeck={handleResetDeck} onDeleteDeck={handleDeleteDeck} isLoading={appStatus === 'loading'} error={error} isFromCache={isFromCache} />;
     }
   };
 
@@ -669,7 +701,7 @@ function App() {
               </button>
             </header>
             <main className="flex-grow overflow-y-auto pb-24 md:pb-4">
-              <MyDecksView decks={[]} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} isLoading={false} error={error} />
+              <MyDecksView decks={[]} onSelectDeck={handleSelectDeck} onGenerate={handleGenerate} isLoading={false} error={error} isFromCache={isFromCache} />
             </main>
           </div>
           <BottomNav activeView={activeView} setActiveView={setActiveView} />
@@ -693,13 +725,13 @@ function App() {
               {theme === 'dark' ? <SunIcon className="w-6 h-6 text-yellow-400" /> : <MoonIcon className="w-6 h-6 text-slate-800" />}
             </button>
           </header>
-          <main className="flex-grow overflow-y-auto pb-24 md:pb-4">
+          <main className={`flex-grow ${activeView === 'study' ? 'overflow-hidden' : 'overflow-y-auto'} pb-24 md:pb-4`}>
             {renderView()}
           </main>
         </div>
         <BottomNav activeView={activeView} setActiveView={setActiveView} />
         {selectedCardForChat && <RevisionChatModal card={selectedCardForChat} isOpen={!!selectedCardForChat} onClose={() => setSelectedCardForChat(null)} />}
-        {isSettingsModalOpen && <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setSettingsModalOpen(false)} />}
+        {isSettingsModalOpen && <SettingsModal isOpen={isSettingsModalOpen} onClose={() => setSettingsModalOpen(false)} theme={theme} onThemeChange={setTheme} />}
         {isHelpModalOpen && <HelpModal isOpen={isHelpModalOpen} onClose={() => setHelpModalOpen(false)} />}
       </div>
     </BackgroundNoiseWrapper>

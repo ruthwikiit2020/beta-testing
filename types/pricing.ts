@@ -1,6 +1,7 @@
 // Pricing and Subscription Types
 
-export type PricingTier = 'free' | 'pro' | 'flash' | 'institution';
+export type PricingTier = 'free' | 'pro' | 'flash' | 'institution' | 'owner';
+export type UIPricingTier = 'free' | 'pro' | 'flash' | 'institution';
 
 export interface PricingFeature {
   id: string;
@@ -42,7 +43,7 @@ export interface PricingTierConfig {
   cta: string;
 }
 
-export const PRICING_TIERS: Record<PricingTier, PricingTierConfig> = {
+export const PRICING_TIERS: Record<UIPricingTier, PricingTierConfig> = {
   free: {
     id: 'free',
     name: 'Free',
@@ -52,18 +53,19 @@ export const PRICING_TIERS: Record<PricingTier, PricingTierConfig> = {
       yearly: '₹0',
     },
     features: [
-      { id: 'pdf-uploads', name: 'PDF Uploads', description: '4 PDF uploads/day (max 20 pages each)' },
+      { id: 'pdf-uploads', name: 'PDF Uploads', description: '10 PDF uploads/day (max 20 pages each)' },
       { id: 'flashcards', name: 'Flashcards', description: '100 flashcards/month' },
       { id: 'revision-hub', name: 'Revision Hub', description: '15 cards saved' },
       { id: 'spaced-repetition', name: 'Spaced Repetition', description: 'Basic spaced repetition' },
+      { id: 'smart-filters', name: 'Smart Filters', description: 'Customize flashcard generation' },
       { id: 'themes', name: 'Themes', description: 'Light/Dark mode' },
     ],
     limits: {
-      maxPdfUploadsPerDay: 4,
+      maxPdfUploadsPerDay: 10,
       maxPagesPerPdf: 20,
       maxFlashcardsPerMonth: 100,
       maxRevisionHubCards: 15,
-      hasSmartFilters: false,
+      hasSmartFilters: true,
       hasAnalytics: false,
       hasExamMode: false,
       hasOfflineMode: false,
@@ -86,7 +88,7 @@ export const PRICING_TIERS: Record<PricingTier, PricingTierConfig> = {
       yearly: '₹199',
     },
     features: [
-      { id: 'pdf-uploads', name: 'PDF Uploads', description: '10 PDF uploads/day (max 80 pages each)' },
+      { id: 'pdf-uploads', name: 'PDF Uploads', description: '40 PDF uploads/day (max 80 pages each)' },
       { id: 'flashcards', name: 'Flashcards', description: '1,000 flashcards/month' },
       { id: 'revision-hub', name: 'Revision Hub', description: 'Unlimited storage' },
       { id: 'smart-filters', name: 'Smart Filters', description: 'Formulas, Key Concepts, Summaries' },
@@ -94,7 +96,7 @@ export const PRICING_TIERS: Record<PricingTier, PricingTierConfig> = {
       { id: 'exam-mode', name: 'Exam Mode', description: 'Exam mode quizzes' },
     ],
     limits: {
-      maxPdfUploadsPerDay: 10,
+      maxPdfUploadsPerDay: 40,
       maxPagesPerPdf: 80,
       maxFlashcardsPerMonth: 1000,
       maxRevisionHubCards: -1, // Unlimited

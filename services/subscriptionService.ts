@@ -10,6 +10,15 @@ export class SubscriptionService {
     this.subscription = this.loadSubscription();
   }
 
+  // Check if current user is the owner
+  private isOwner(): boolean {
+    // Only grant owner status to the specific email: ruthwikiit2020@gmail.com
+    const userEmail = localStorage.getItem('userEmail') || '';
+    
+    // Strict owner identification - only this specific email gets owner access
+    return userEmail.toLowerCase() === 'ruthwikiit2020@gmail.com';
+  }
+
   static getInstance(): SubscriptionService {
     if (!SubscriptionService.instance) {
       SubscriptionService.instance = new SubscriptionService();
@@ -21,28 +30,59 @@ export class SubscriptionService {
   private loadSubscription(): UserSubscription {
     try {
       const stored = localStorage.getItem('userSubscription');
+      let subscription: UserSubscription;
+      
       if (stored) {
-        const parsed = JSON.parse(stored);
-        // Reset daily/monthly counters if needed
-        const today = new Date().toDateString();
-        const lastReset = localStorage.getItem('lastUsageReset');
-        
-        if (lastReset !== today) {
-          parsed.usage.pdfUploadsToday = 0;
-          if (new Date().getDate() === 1) {
-            parsed.usage.flashcardsThisMonth = 0;
-          }
-          localStorage.setItem('lastUsageReset', today);
-          this.saveSubscription(parsed);
-        }
-        
-        return parsed;
+        subscription = JSON.parse(stored);
+      } else {
+        subscription = { ...DEFAULT_SUBSCRIPTION };
       }
+      
+      // Check if user is owner and upgrade automatically
+      if (this.isOwner() && subscription.tier !== 'owner') {
+        console.log('Owner detected - upgrading to owner tier');
+        subscription = {
+          ...subscription,
+          tier: 'owner',
+          startDate: new Date().toISOString(),
+          isActive: true,
+        };
+        this.saveSubscription(subscription);
+      }
+      
+      // Ensure non-owner users are downgraded to free if they somehow have owner status
+      if (!this.isOwner() && subscription.tier === 'owner') {
+        console.log('Non-owner user detected with owner status - downgrading to free');
+        subscription = {
+          ...DEFAULT_SUBSCRIPTION,
+          startDate: new Date().toISOString(),
+          isActive: true,
+          usage: {
+            ...DEFAULT_SUBSCRIPTION.usage,
+            currentPdfCount: 0,
+          },
+        };
+        this.saveSubscription(subscription);
+      }
+      
+      // Reset daily/monthly counters if needed
+      const today = new Date().toDateString();
+      const lastReset = localStorage.getItem('lastUsageReset');
+      
+      if (lastReset !== today) {
+        subscription.usage.pdfUploadsToday = 0;
+        if (new Date().getDate() === 1) {
+          subscription.usage.flashcardsThisMonth = 0;
+        }
+        localStorage.setItem('lastUsageReset', today);
+        this.saveSubscription(subscription);
+      }
+      
+      return subscription;
     } catch (error) {
       console.error('Error loading subscription:', error);
+      return { ...DEFAULT_SUBSCRIPTION };
     }
-    
-    return { ...DEFAULT_SUBSCRIPTION };
   }
 
   // Save subscription to localStorage
@@ -64,15 +104,38 @@ export class SubscriptionService {
     return this.subscription.tier;
   }
 
+  // Check if current user is owner (public method for debugging)
+  isCurrentUserOwner(): boolean {
+    return this.isOwner();
+  }
+
   // Check if user has access to a feature
   hasFeature(feature: keyof typeof PRICING_TIERS.free.limits): boolean {
+    // Owner always has access to all features
+    if (this.isOwner()) {
+      return true;
+    }
+    
     const tierConfig = PRICING_TIERS[this.subscription.tier];
+    if (!tierConfig) {
+      // Fallback for owner tier or unknown tiers
+      return false;
+    }
     return tierConfig.limits[feature] === true;
   }
 
   // Check if user can perform an action (with limits)
   canPerformAction(action: 'uploadPdf' | 'generateFlashcards' | 'saveToRevisionHub'): boolean {
+    // Owner always has unlimited access
+    if (this.isOwner()) {
+      return true;
+    }
+    
     const tierConfig = PRICING_TIERS[this.subscription.tier];
+    if (!tierConfig) {
+      // Fallback for owner tier or unknown tiers
+      return false;
+    }
     
     switch (action) {
       case 'uploadPdf':
@@ -94,7 +157,16 @@ export class SubscriptionService {
 
   // Get remaining quota for an action
   getRemainingQuota(action: 'uploadPdf' | 'generateFlashcards' | 'saveToRevisionHub'): number {
+    // Owner always has unlimited quota
+    if (this.isOwner()) {
+      return -1; // Unlimited
+    }
+    
     const tierConfig = PRICING_TIERS[this.subscription.tier];
+    if (!tierConfig) {
+      // Fallback for owner tier or unknown tiers
+      return -1; // Unlimited for owner
+    }
     
     switch (action) {
       case 'uploadPdf':
@@ -158,7 +230,16 @@ export class SubscriptionService {
 
   // Check if PDF size is within limits
   canUploadPdf(pageCount: number): boolean {
+    // Owner can upload PDFs of any size
+    if (this.isOwner()) {
+      return true;
+    }
+    
     const tierConfig = PRICING_TIERS[this.subscription.tier];
+    if (!tierConfig) {
+      // Fallback for owner tier or unknown tiers
+      return true; // Allow unlimited for owner
+    }
     
     if (tierConfig.limits.hasUnlimitedUploads) return true;
     if (tierConfig.limits.maxPagesPerPdf === -1) return true;
@@ -170,6 +251,11 @@ export class SubscriptionService {
   getUpgradeSuggestions(): string[] {
     const suggestions: string[] = [];
     const tierConfig = PRICING_TIERS[this.subscription.tier];
+    
+    // Owner doesn't need upgrade suggestions
+    if (this.isOwner() || !tierConfig) {
+      return suggestions;
+    }
     
     // Check PDF upload limits
     if (!tierConfig.limits.hasUnlimitedUploads) {
@@ -222,6 +308,7 @@ export class SubscriptionService {
   resetUsage(): void {
     this.subscription.usage = {
       pdfUploadsToday: 0,
+      currentPdfCount: 0,
       flashcardsThisMonth: 0,
       revisionHubCards: 0,
     };
