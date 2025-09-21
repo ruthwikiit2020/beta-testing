@@ -19,10 +19,6 @@
 [context.branch-deploy]
   environment = { NODE_ENV = "development" }
 
-# Custom domain configuration
-[context.production]
-  environment = { NODE_ENV = "production" }
-
 # Force HTTPS
 [[headers]]
   for = "/*"
