@@ -18,3 +18,17 @@
 
 [context.branch-deploy]
   environment = { NODE_ENV = "development" }
+
+# Custom domain configuration
+[context.production]
+  environment = { NODE_ENV = "production" }
+
+# Force HTTPS
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
