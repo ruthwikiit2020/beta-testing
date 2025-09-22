@@ -1,16 +1,20 @@
 import React from 'react';
 import { subscriptionService } from '../services/subscriptionService';
-import { PRICING_TIERS } from '../types/pricing';
+import { PRICING_TIERS, PricingTierConfig, UserSubscription } from '../types/pricing';
 
 interface UsageIndicatorProps {
   type: 'pdfUploads' | 'flashcards' | 'revisionHub';
   className?: string;
 }
 
-const UsageIndicator: React.FC<UsageIndicatorProps> = ({ type, className = '' }) => {
-  const subscription = subscriptionService.getSubscription();
-  const tierConfig = PRICING_TIERS[subscription.tier];
-  
+interface UsageIndicatorContentProps {
+  type: 'pdfUploads' | 'flashcards' | 'revisionHub';
+  className: string;
+  tierConfig: PricingTierConfig;
+  subscription: UserSubscription;
+}
+
+const UsageIndicatorContent: React.FC<UsageIndicatorContentProps> = ({ type, className, tierConfig, subscription }) => {
   const getUsageData = () => {
     switch (type) {
       case 'pdfUploads':
@@ -105,6 +109,20 @@ const UsageIndicator: React.FC<UsageIndicatorProps> = ({ type, className = '' })
       </div>
     </div>
   );
+};
+
+const UsageIndicator: React.FC<UsageIndicatorProps> = ({ type, className = '' }) => {
+  const subscription = subscriptionService.getSubscription();
+  const tierConfig = PRICING_TIERS[subscription.tier];
+  
+  // Fallback to free tier if tierConfig is undefined
+  if (!tierConfig) {
+    console.warn(`Unknown tier: ${subscription.tier}, falling back to free tier`);
+    const fallbackConfig = PRICING_TIERS.free;
+    return <UsageIndicatorContent type={type} className={className} tierConfig={fallbackConfig} subscription={subscription} />;
+  }
+  
+  return <UsageIndicatorContent type={type} className={className} tierConfig={tierConfig} subscription={subscription} />;
 };
 
 export default UsageIndicator;

@@ -3,7 +3,17 @@
   "private": true,
   "version": "1.0.0-beta",
   "description": "AI-powered flashcard generation platform for transforming PDF study materials into interactive learning experiences",
-  "keywords": ["ai", "flashcards", "education", "learning", "pdf", "react", "typescript", "firebase", "gemini"],
+  "keywords": [
+    "ai",
+    "flashcards",
+    "education",
+    "learning",
+    "pdf",
+    "react",
+    "typescript",
+    "firebase",
+    "gemini"
+  ],
   "author": "Ruth Wiki",
   "license": "UNLICENSED",
   "repository": {
@@ -45,6 +55,7 @@
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "autoprefixer": "^10.4.21",
+    "netlify-cli": "^23.6.0",
     "postcss": "^8.5.6",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
