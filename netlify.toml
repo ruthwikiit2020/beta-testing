@@ -3,7 +3,7 @@
   command = "npm install && npm run build"
 
 [build.environment]
-  NODE_VERSION = "18"
+  NODE_VERSION = "20"
   NPM_FLAGS = "--production=false"
   NODE_ENV = "development"
 
