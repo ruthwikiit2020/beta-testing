@@ -1,6 +1,6 @@
 // Subscription Service for managing user tiers and feature access
 
-import { PricingTier, UserSubscription, PRICING_TIERS, DEFAULT_SUBSCRIPTION } from '../types/pricing';
+import { PricingTier, UserSubscription, PRICING_TIERS, DEFAULT_SUBSCRIPTION, OWNER_TIER_CONFIG } from '../types/pricing';
 
 export class SubscriptionService {
   private static instance: SubscriptionService;
@@ -116,9 +116,9 @@ export class SubscriptionService {
       return true;
     }
     
-    const tierConfig = PRICING_TIERS[this.subscription.tier];
+    const tierConfig = this.subscription.tier === 'owner' ? OWNER_TIER_CONFIG : PRICING_TIERS[this.subscription.tier as keyof typeof PRICING_TIERS];
     if (!tierConfig) {
-      // Fallback for owner tier or unknown tiers
+      // Fallback for unknown tiers
       return false;
     }
     return tierConfig.limits[feature] === true;
@@ -131,9 +131,9 @@ export class SubscriptionService {
       return true;
     }
     
-    const tierConfig = PRICING_TIERS[this.subscription.tier];
+    const tierConfig = this.subscription.tier === 'owner' ? OWNER_TIER_CONFIG : PRICING_TIERS[this.subscription.tier as keyof typeof PRICING_TIERS];
     if (!tierConfig) {
-      // Fallback for owner tier or unknown tiers
+      // Fallback for unknown tiers
       return false;
     }
     
@@ -162,10 +162,10 @@ export class SubscriptionService {
       return -1; // Unlimited
     }
     
-    const tierConfig = PRICING_TIERS[this.subscription.tier];
+    const tierConfig = this.subscription.tier === 'owner' ? OWNER_TIER_CONFIG : PRICING_TIERS[this.subscription.tier as keyof typeof PRICING_TIERS];
     if (!tierConfig) {
-      // Fallback for owner tier or unknown tiers
-      return -1; // Unlimited for owner
+      // Fallback for unknown tiers
+      return -1; // Unlimited for unknown tiers
     }
     
     switch (action) {
@@ -235,10 +235,10 @@ export class SubscriptionService {
       return true;
     }
     
-    const tierConfig = PRICING_TIERS[this.subscription.tier];
+    const tierConfig = this.subscription.tier === 'owner' ? OWNER_TIER_CONFIG : PRICING_TIERS[this.subscription.tier as keyof typeof PRICING_TIERS];
     if (!tierConfig) {
-      // Fallback for owner tier or unknown tiers
-      return true; // Allow unlimited for owner
+      // Fallback for unknown tiers
+      return true; // Allow unlimited for unknown tiers
     }
     
     if (tierConfig.limits.hasUnlimitedUploads) return true;
@@ -250,7 +250,7 @@ export class SubscriptionService {
   // Get upgrade suggestions based on current usage
   getUpgradeSuggestions(): string[] {
     const suggestions: string[] = [];
-    const tierConfig = PRICING_TIERS[this.subscription.tier];
+    const tierConfig = this.subscription.tier === 'owner' ? OWNER_TIER_CONFIG : PRICING_TIERS[this.subscription.tier as keyof typeof PRICING_TIERS];
     
     // Owner doesn't need upgrade suggestions
     if (this.isOwner() || !tierConfig) {

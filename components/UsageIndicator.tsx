@@ -1,6 +1,6 @@
 import React from 'react';
 import { subscriptionService } from '../services/subscriptionService';
-import { PRICING_TIERS, PricingTierConfig, UserSubscription } from '../types/pricing';
+import { PRICING_TIERS, PricingTierConfig, UserSubscription, OWNER_TIER_CONFIG } from '../types/pricing';
 
 interface UsageIndicatorProps {
   type: 'pdfUploads' | 'flashcards' | 'revisionHub';
@@ -113,7 +113,7 @@ const UsageIndicatorContent: React.FC<UsageIndicatorContentProps> = ({ type, cla
 
 const UsageIndicator: React.FC<UsageIndicatorProps> = ({ type, className = '' }) => {
   const subscription = subscriptionService.getSubscription();
-  const tierConfig = PRICING_TIERS[subscription.tier];
+  const tierConfig = subscription.tier === 'owner' ? OWNER_TIER_CONFIG : PRICING_TIERS[subscription.tier as keyof typeof PRICING_TIERS];
   
   // Fallback to free tier if tierConfig is undefined
   if (!tierConfig) {

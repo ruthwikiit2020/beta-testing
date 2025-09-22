@@ -43,7 +43,7 @@ export interface PricingTierConfig {
   cta: string;
 }
 
-export const PRICING_TIERS: Record<PricingTier, PricingTierConfig> = {
+export const PRICING_TIERS: Record<UIPricingTier, PricingTierConfig> = {
   free: {
     id: 'free',
     name: 'Free',
@@ -185,38 +185,40 @@ export const PRICING_TIERS: Record<PricingTier, PricingTierConfig> = {
     isHighlighted: true,
     cta: 'Contact Sales',
   },
-  owner: {
-    id: 'owner',
-    name: 'Owner',
-    description: 'Full access with unlimited everything',
-    price: {
-      monthly: '₹0',
-      yearly: '₹0',
-    },
-    features: [
-      { id: 'unlimited-everything', name: 'Unlimited Everything', description: 'Unlimited uploads, flashcards, and all features' },
-      { id: 'priority-processing', name: 'Priority Processing', description: 'Fastest AI processing queue' },
-      { id: 'all-features', name: 'All Features', description: 'Access to all premium features' },
-    ],
-    limits: {
-      maxPdfUploadsPerDay: -1, // Unlimited
-      maxPagesPerPdf: -1, // Unlimited
-      maxFlashcardsPerMonth: -1, // Unlimited
-      maxRevisionHubCards: -1, // Unlimited
-      hasSmartFilters: true,
-      hasAnalytics: true,
-      hasExamMode: true,
-      hasOfflineMode: true,
-      hasPersonalTutor: true,
-      hasPriorityProcessing: true,
-      hasUnlimitedUploads: true,
-      hasUnlimitedFlashcards: true,
-      hasBulkManagement: true,
-      hasCustomBranding: true,
-      hasDedicatedSupport: true,
-    },
-    cta: 'Owner Access',
+};
+
+// Internal owner tier configuration (not shown in UI)
+export const OWNER_TIER_CONFIG: PricingTierConfig = {
+  id: 'owner',
+  name: 'Owner',
+  description: 'Full access with unlimited everything',
+  price: {
+    monthly: '₹0',
+    yearly: '₹0',
   },
+  features: [
+    { id: 'unlimited-everything', name: 'Unlimited Everything', description: 'Unlimited uploads, flashcards, and all features' },
+    { id: 'priority-processing', name: 'Priority Processing', description: 'Fastest AI processing queue' },
+    { id: 'all-features', name: 'All Features', description: 'Access to all premium features' },
+  ],
+  limits: {
+    maxPdfUploadsPerDay: -1, // Unlimited
+    maxPagesPerPdf: -1, // Unlimited
+    maxFlashcardsPerMonth: -1, // Unlimited
+    maxRevisionHubCards: -1, // Unlimited
+    hasSmartFilters: true,
+    hasAnalytics: true,
+    hasExamMode: true,
+    hasOfflineMode: true,
+    hasPersonalTutor: true,
+    hasPriorityProcessing: true,
+    hasUnlimitedUploads: true,
+    hasUnlimitedFlashcards: true,
+    hasBulkManagement: true,
+    hasCustomBranding: true,
+    hasDedicatedSupport: true,
+  },
+  cta: 'Owner Access',
 };
 
 export interface UserSubscription {
