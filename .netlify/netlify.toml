@@ -9,8 +9,8 @@ plugins = []
 [build]
 publish = "/Users/rsk/Desktop/beta-testing/dist"
 publishOrigin = "config"
-commandOrigin = "ui"
-command = "npm run build"
+commandOrigin = "config"
+command = "npm install && npx vite build"
 
 [build.environment]
 NODE_VERSION = "18"
