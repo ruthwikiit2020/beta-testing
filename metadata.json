@@ -1,0 +1,5 @@
+{
+  "name": "StudySwipe AI",
+  "description": "Upload your study materials, and this app will use AI to generate interactive, swipeable flashcards. Swipe right to save cards for revision and track your progress.",
+  "requestFramePermissions": []
+}
