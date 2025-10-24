@@ -328,6 +328,15 @@ export const openRazorpayCheckout = async (
     alert("Razorpay SDK not loaded. Please refresh the page.");
     return;
   }
+  
+  // Get or prompt for contact number
+  let contactNumber = localStorage.getItem('razorpay_contact');
+  if (!contactNumber) {
+    contactNumber = prompt('Please enter your mobile number for payment:') || '';
+    if (contactNumber) {
+      localStorage.setItem('razorpay_contact', contactNumber);
+    }
+  }
 
   const options = {
     key: "rzp_live_RTo6jwSzYlmteQ", // 🔑 Replace with your Razorpay test/live key
@@ -336,6 +345,11 @@ export const openRazorpayCheckout = async (
     name: "ReWise AI",
     description: `Payment for ${plan} Plan (${billingCycle})`,
     image: "/logo.png",
+    notes: {
+      plan: plan,
+      billingCycle: billingCycle,
+      userId: currentUser.uid,
+    },
     handler: async function (response: any) {
       console.log("Razorpay response:", response);
 
@@ -350,11 +364,16 @@ export const openRazorpayCheckout = async (
       const service = SubscriptionService.getInstance();
       service.upgradeToTier(plan.toLowerCase() as PricingTier, billingCycle);
       
-      // Save to Firebase
+      // Get contact number from response or local storage
+      const contactNumber = response.contact || localStorage.getItem('razorpay_contact') || undefined;
+      
+      // Save to Firebase with payment details
       await saveSubscriptionToFirebase(
         plan.toLowerCase() as PricingTier, 
         billingCycle, 
-        response.razorpay_payment_id
+        response.razorpay_payment_id,
+        contactNumber,
+        amount
       );
       
       alert(`✅ Payment Successful! Welcome to ${plan} plan!`);
@@ -369,7 +388,14 @@ export const openRazorpayCheckout = async (
     prefill: {
       name: currentUser.displayName || localStorage.getItem("userName") || "Guest User",
       email: currentUser.email || localStorage.getItem("userEmail") || "guest@example.com",
-      contact: "9999999999",
+      contact: localStorage.getItem("razorpay_contact") || "",
+    },
+    modal: {
+      ondismiss: function() {
+        console.log('Razorpay checkout dismissed');
+      },
+      // Capture contact details
+      confirm_close: false,
     },
     theme: {
       color: "#429E9D",
@@ -381,16 +407,18 @@ export const openRazorpayCheckout = async (
 };
 
 /**
- * Save subscription to Firebase
+ * Save subscription to Firebase with complete payment tracking
  */
 async function saveSubscriptionToFirebase(
   tier: PricingTier, 
   billingCycle: 'monthly' | 'yearly',
-  paymentId: string
+  paymentId: string,
+  contactNumber?: string,
+  amount?: number
 ) {
   try {
     const { auth, db } = await import('./firebase');
-    const { doc, setDoc } = await import('firebase/firestore');
+    const { doc, setDoc, collection, addDoc } = await import('firebase/firestore');
     
     const user = auth.currentUser;
     if (!user) {
@@ -422,6 +450,43 @@ async function saveSubscriptionToFirebase(
     await setDoc(userRef, { subscription: subscriptionData }, { merge: true });
     
     console.log('Subscription saved to Firebase:', subscriptionData);
+    
+    // Save detailed payment record to payments collection
+    const paymentRecord = {
+      userId: user.uid,
+      userEmail: user.email,
+      userName: user.displayName,
+      contactNumber: contactNumber || 'Not provided',
+      tier,
+      billingCycle,
+      amount: amount || 0,
+      paymentId,
+      startDate: startDate.toISOString(),
+      endDate: endDate.toISOString(),
+      createdAt: new Date().toISOString(),
+      status: 'success',
+    };
+    
+    // Save to general payments collection for admin tracking
+    const paymentsRef = collection(db, 'payments');
+    await addDoc(paymentsRef, paymentRecord);
+    
+    // Save to plan-specific customer collection
+    const planCustomersRef = collection(db, `plans/${tier}/customers`);
+    await addDoc(planCustomersRef, {
+      userId: user.uid,
+      userEmail: user.email,
+      userName: user.displayName,
+      contactNumber: contactNumber || 'Not provided',
+      billingCycle,
+      amount: amount || 0,
+      paymentId,
+      subscribedAt: new Date().toISOString(),
+      expiresAt: endDate.toISOString(),
+      isActive: true,
+    });
+    
+    console.log('Payment record saved to Firebase collections');
   } catch (error) {
     console.error('Error saving subscription to Firebase:', error);
   }
