@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { GoogleIcon, StudyIcon, RevisionIcon, ProgressIcon, SunIcon, MoonIcon } from './icons/AppIcons';
 import { BackgroundNoiseWrapper } from './ui/background-noise-effect';
 import { PricingSectionDemo } from './blocks/pricing-demo';
 import { TestimonialCarouselDemo } from './blocks/testimonials-demo';
+import PrivacyPolicyModal from './PrivacyPolicyModal';
 
 interface LandingPageProps {
   onGoogleSignIn: () => void;
@@ -21,6 +22,8 @@ const motion = {
 };
 
 const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggleTheme }) => {
+  const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
+  
   const scrollToSection = (sectionId: string) => {
     const element = document.getElementById(sectionId);
     if (element) {
@@ -256,7 +259,7 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggle
                 &copy; {new Date().getFullYear()} ReWise AI. All Rights Reserved.
               </p>
               <div className="flex items-center gap-6 text-sm">
-                <a href="#privacy" className="text-slate-500 dark:text-slate-400 hover:text-brand-primary transition-colors">Privacy Policy</a>
+                <button onClick={() => setShowPrivacyPolicy(true)} className="text-slate-500 dark:text-slate-400 hover:text-brand-primary transition-colors">Privacy Policy</button>
                 <a href="#terms" className="text-slate-500 dark:text-slate-400 hover:text-brand-primary transition-colors">Terms of Service</a>
                 <a href="#cookies" className="text-slate-500 dark:text-slate-400 hover:text-brand-primary transition-colors">Cookie Policy</a>
               </div>
@@ -264,6 +267,12 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggle
           </div>
         </div>
       </footer>
+      
+      {/* Privacy Policy Modal */}
+      <PrivacyPolicyModal 
+        isOpen={showPrivacyPolicy}
+        onClose={() => setShowPrivacyPolicy(false)}
+      />
     </BackgroundNoiseWrapper>
   );
 };
