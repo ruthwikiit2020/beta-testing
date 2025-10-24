@@ -4,6 +4,8 @@ import { BackgroundNoiseWrapper } from './ui/background-noise-effect';
 import { PricingSectionDemo } from './blocks/pricing-demo';
 import { TestimonialCarouselDemo } from './blocks/testimonials-demo';
 import PrivacyPolicyModal from './PrivacyPolicyModal';
+import TermsOfServiceModal from './TermsOfServiceModal';
+import CookiePolicyModal from './CookiePolicyModal';
 
 interface LandingPageProps {
   onGoogleSignIn: () => void;
@@ -23,6 +25,8 @@ const motion = {
 
 const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggleTheme }) => {
   const [showPrivacyPolicy, setShowPrivacyPolicy] = useState(false);
+  const [showTermsOfService, setShowTermsOfService] = useState(false);
+  const [showCookiePolicy, setShowCookiePolicy] = useState(false);
   
   const scrollToSection = (sectionId: string) => {
     const element = document.getElementById(sectionId);
@@ -260,18 +264,26 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggle
               </p>
               <div className="flex items-center gap-6 text-sm">
                 <button onClick={() => setShowPrivacyPolicy(true)} className="text-slate-500 dark:text-slate-400 hover:text-brand-primary transition-colors">Privacy Policy</button>
-                <a href="#terms" className="text-slate-500 dark:text-slate-400 hover:text-brand-primary transition-colors">Terms of Service</a>
-                <a href="#cookies" className="text-slate-500 dark:text-slate-400 hover:text-brand-primary transition-colors">Cookie Policy</a>
+                <button onClick={() => setShowTermsOfService(true)} className="text-slate-500 dark:text-slate-400 hover:text-brand-primary transition-colors">Terms of Service</button>
+                <button onClick={() => setShowCookiePolicy(true)} className="text-slate-500 dark:text-slate-400 hover:text-brand-primary transition-colors">Cookie Policy</button>
               </div>
             </div>
           </div>
         </div>
       </footer>
       
-      {/* Privacy Policy Modal */}
+      {/* Policy Modals */}
       <PrivacyPolicyModal 
         isOpen={showPrivacyPolicy}
         onClose={() => setShowPrivacyPolicy(false)}
+      />
+      <TermsOfServiceModal 
+        isOpen={showTermsOfService}
+        onClose={() => setShowTermsOfService(false)}
+      />
+      <CookiePolicyModal 
+        isOpen={showCookiePolicy}
+        onClose={() => setShowCookiePolicy(false)}
       />
     </BackgroundNoiseWrapper>
   );
