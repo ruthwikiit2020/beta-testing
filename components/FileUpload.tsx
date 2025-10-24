@@ -3,6 +3,8 @@ import { UploadIcon, FilterIcon } from './icons/AppIcons';
 import FilterPanel from './FilterPanel';
 import FilterPreview from './FilterPreview';
 import { FlashcardFilters, DEFAULT_FILTERS, NO_FILTERS } from '../types/filters';
+import { subscriptionService } from '../services/subscriptionService';
+import { PRICING_TIERS } from '../types/pricing';
 
 interface FileUploadProps {
   onGenerate: (text: string, fileName: string, filters: FlashcardFilters, totalPages: number, onProgress: (progress: number, status: string) => void) => void;
@@ -45,6 +47,28 @@ const FileUpload: React.FC<FileUploadProps> = ({ onGenerate, isLoading }) => {
         console.log('PDF loaded, processing pages...');
         
         setTotalPages(pdf.numPages);
+        
+        // Check page limit based on user's subscription tier
+        const currentTier = subscriptionService.getCurrentTier();
+        const tierConfig = PRICING_TIERS[currentTier];
+        
+        if (tierConfig && tierConfig.limits.maxPagesPerPdf !== -1) {
+          const maxPages = tierConfig.limits.maxPagesPerPdf;
+          
+          if (pdf.numPages > maxPages) {
+            const tierName = tierConfig.name;
+            setError(
+              `⚠️ PDF Page Limit Exceeded!\n\n` +
+              `Your ${tierName} plan allows PDFs up to ${maxPages} pages.\n` +
+              `This PDF has ${pdf.numPages} pages.\n\n` +
+              `Please upgrade your plan or upload a smaller PDF.`
+            );
+            setFileName(null);
+            setExtractedText('');
+            setTotalPages(0);
+            return;
+          }
+        }
         
         let fullText = '';
         for (let i = 1; i <= pdf.numPages; i++) {
@@ -140,7 +164,18 @@ const FileUpload: React.FC<FileUploadProps> = ({ onGenerate, isLoading }) => {
         </label>
         <input id="file-upload" type="file" className="sr-only" onChange={handleFileChange} accept=".pdf" disabled={isLoading} />
 
-        {error && <p className="text-red-500 dark:text-red-400 mt-2">{error}</p>}
+        {error && (
+          <div className="w-full p-4 bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-lg">
+            <div className="flex items-start gap-3">
+              <svg className="w-6 h-6 text-red-500 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+              <div className="flex-1">
+                <p className="text-red-600 dark:text-red-400 font-semibold whitespace-pre-line text-left">{error}</p>
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Filter Preview */}
         {extractedText && (

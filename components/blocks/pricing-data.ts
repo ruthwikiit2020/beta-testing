@@ -12,9 +12,9 @@ export const TIERS: PricingTier[] = [
     },
     description: "Forever free, with daily limits",
     features: [
-      "10 PDF uploads/day (max 20 pages each)",
-      "100 flashcards/month",
-      "Revision Hub: 15 cards saved",
+      "5 PDF uploads/day (max 20 pages each)",
+      "80 flashcards/month",
+      "Revision Hub: 10 cards saved",
       "Basic spaced repetition",
       "Light/Dark mode",
     ],
@@ -24,14 +24,14 @@ export const TIERS: PricingTier[] = [
     id: "pro",
     name: "Pro",
     price: {
-      monthly: "₹1",
-      yearly: "₹1",
+      monthly: "₹199",
+      yearly: "₹99",
     },
-    yearlyTotal: 12, // Yearly total for payment
+    yearlyTotal: 1188, // Yearly total for payment (99 * 12 = 1188)
     description: "Most Popular – Perfect for students",
     features: [
-      "40 PDF uploads/day (max 80 pages each)",
-      "1,000 flashcards/month",
+      "12 PDF uploads/day (max 80 pages each)",
+      "400 flashcards/month",
       "Unlimited Revision Hub storage",
       "Smart filters (Formulas, Key Concepts, Summaries)",
       "Analytics dashboard",
@@ -47,7 +47,7 @@ export const TIERS: PricingTier[] = [
       monthly: "₹499",
       yearly: "₹399",
     },
-    yearlyTotal: 4800, // Yearly total for payment (399 * 12 = 4788, rounded to 4800)
+    yearlyTotal: 4788, // Yearly total for payment (399 * 12 = 4788)
     description: "For power users & researchers",
     features: [
       "Unlimited PDF uploads (no page limit)",
