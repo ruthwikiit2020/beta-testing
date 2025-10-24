@@ -202,6 +202,58 @@ const LandingPage: React.FC<LandingPageProps> = ({ onGoogleSignIn, theme, toggle
                 <TestimonialCarouselDemo />
             </div>
         </section>
+
+        {/* FAQ Section - Full Screen */}
+        <section id="faq" className="h-screen flex items-center justify-center bg-slate-100 dark:bg-brand-surface py-20">
+            <div className="container mx-auto px-6 max-w-4xl">
+                <div className="text-center mb-8">
+                    <h2 className="text-2xl md:text-3xl font-bold mb-2">Frequently Asked Questions</h2>
+                    <p className="text-base text-slate-500 dark:text-slate-400">Everything you need to know about ReWise AI</p>
+                </div>
+                
+                <div className="space-y-4">
+                    {/* FAQ 1 */}
+                    <div className="bg-white dark:bg-brand-dark rounded-lg p-5 border border-slate-200 dark:border-slate-700 hover:shadow-lg transition-shadow">
+                        <h3 className="text-base font-bold text-slate-800 dark:text-slate-200 mb-2">
+                            What is ReWise AI?
+                        </h3>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                            ReWise AI is an AI-powered platform that transforms your PDF study materials into interactive flashcards. Simply upload your notes, textbooks, or any PDF, and our AI creates smart, swipeable flashcards organized by chapters to help you master any subject faster.
+                        </p>
+                    </div>
+
+                    {/* FAQ 2 */}
+                    <div className="bg-white dark:bg-brand-dark rounded-lg p-5 border border-slate-200 dark:border-slate-700 hover:shadow-lg transition-shadow">
+                        <h3 className="text-base font-bold text-slate-800 dark:text-slate-200 mb-2">
+                            How does the AI generate flashcards?
+                        </h3>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                            We use Google's Gemini AI to analyze your PDFs and extract key concepts, definitions, and important information. The AI understands context and creates question-answer pairs that help you learn effectively. You can also use Smart Filters to focus on specific content like formulas, definitions, or summaries.
+                        </p>
+                    </div>
+
+                    {/* FAQ 3 */}
+                    <div className="bg-white dark:bg-brand-dark rounded-lg p-5 border border-slate-200 dark:border-slate-700 hover:shadow-lg transition-shadow">
+                        <h3 className="text-base font-bold text-slate-800 dark:text-slate-200 mb-2">
+                            What's included in the Free plan?
+                        </h3>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                            The Free plan includes 5 PDF uploads per day (up to 20 pages each), 80 flashcards per month, and 10 cards saved in your Revision Hub. You get basic spaced repetition and can switch between light/dark modes. Perfect for trying out the platform!
+                        </p>
+                    </div>
+
+                    {/* FAQ 4 */}
+                    <div className="bg-white dark:bg-brand-dark rounded-lg p-5 border border-slate-200 dark:border-slate-700 hover:shadow-lg transition-shadow">
+                        <h3 className="text-base font-bold text-slate-800 dark:text-slate-200 mb-2">
+                            How does the swipe interface work?
+                        </h3>
+                        <p className="text-sm text-slate-600 dark:text-slate-400 leading-relaxed">
+                            Study with an intuitive Tinder-like interface! Swipe right if you know the card, swipe left if you need to revise it. Cards you mark for revision are saved in your Revision Hub where you can review them later and chat with our AI tutor for deeper explanations.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
       </main>
 
       <footer className="py-12 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-brand-dark">
